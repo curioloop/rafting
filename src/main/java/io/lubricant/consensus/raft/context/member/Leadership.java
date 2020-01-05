@@ -1,0 +1,135 @@
+package io.lubricant.consensus.raft.context.member;
+
+import io.lubricant.consensus.raft.RaftParticipant;
+import io.lubricant.consensus.raft.command.RaftLog.Entry;
+import io.lubricant.consensus.raft.transport.RaftCluster.ID;
+
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
+import java.util.concurrent.atomic.AtomicLongFieldUpdater;
+
+public interface Leadership {
+
+    int REPLICATE_LIMIT = 10; // 一次传输的日志数量
+
+    AtomicLongFieldUpdater<State>
+            lastRequest = AtomicLongFieldUpdater.newUpdater(State.class, "lastRequest"),
+            requestSuccess = AtomicLongFieldUpdater.newUpdater(State.class, "requestSuccess"),
+            requestFailure = AtomicLongFieldUpdater.newUpdater(State.class, "requestFailure");
+
+    AtomicIntegerFieldUpdater<State>
+            requestInFlight = AtomicIntegerFieldUpdater.newUpdater(State.class, "requestInFlight");
+
+    /**
+     * 其他节点的状态
+     */
+    class State {
+
+        volatile long lastRequest; // 最近一次发送心跳的时间
+        volatile long requestSuccess; // 最近一次发送心跳成功的时间
+        volatile long requestFailure; // 最近一次发送心跳失败的时间
+        volatile int requestInFlight; // 在途请求数量
+
+        volatile long nextIndex; // 下一条要发送的日志（初始为最后一条日志的 index）
+        volatile long matchIndex; // 已经复制成功的最后一条日志（初始为 0）
+
+        boolean increaseMono(AtomicLongFieldUpdater<State> field, long current, long next) {
+            return (next > current) && field.compareAndSet(this, current, next);
+        }
+
+        synchronized void updateIndex(long index, boolean success) {
+            if (success) {
+                if (index > matchIndex) {
+                    nextIndex = index + 1;
+                    matchIndex = index;
+                }
+            } else if (matchIndex == 0) {
+                nextIndex--;
+            }
+        }
+
+        static long[] majorIndices(Collection<State> states) {
+            long[] matchIndices = states.stream().mapToLong(st -> st.matchIndex).toArray();
+            Arrays.sort(matchIndices); // 将复制成功的最后一条日志索引，按照从小到大进行排序
+            // 第 majority 小的元素，表示至少有 majority 个节点的日志复制的索引均已经帮会这条日志
+            // N = states.size() + 1 表示节点总数，o 表示 majority 对应的索引，* 表示 leader 对应的索引
+            // N = 2, major = 2 : |o|*|
+            // N = 3, major = 2 : |x|o|*|
+            // N = 4, major = 3 : |x|o|x|*|
+            // N = 5, major = 3 : |x|x|o|x|*|
+            // N = 6, major = 4 : |x|x|o|x|x|*|
+            // N = 7, major = 4 : |x|x|x|o|x|x|*|
+            int majorIndex = matchIndices.length / 2;
+            // 返回两个索引：[在所有节点都复制成功的日志索引，在大多数节点复制成功的日志索引]
+            return new long[] {matchIndices[0], matchIndices[majorIndex]};
+        }
+    }
+
+    /**
+     * 日志条目 Key
+     */
+    class EntryKey {
+
+        private final long index, term;
+
+        public EntryKey(Entry entry) {
+            this.index = entry.index();
+            this.term = entry.term();
+        }
+
+        @Override
+        public int hashCode() {
+            return Long.hashCode(index ^ term);
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (obj instanceof EntryKey) {
+                EntryKey key = (EntryKey) obj;
+                return index == key.index && term == key.term;
+            }
+            return false;
+        }
+
+    }
+
+    /**
+     * 未就绪异常（当前集群的健康节点数不足时抛出）
+     */
+    class NotReadyException extends Exception {
+
+        @Override
+        public Throwable fillInStackTrace() {
+            return this;
+        }
+
+    }
+
+    /**
+     * 非主异常（当前节点上的角色不是 Leader 时抛出）
+     */
+    class NotLeaderException extends Exception {
+
+        private final ID currentLeader;
+
+        public NotLeaderException(RaftParticipant participant) {
+            if (participant instanceof Follower) {
+                currentLeader = ((Follower)participant).currentLeader();
+            } else {
+                currentLeader = null;
+            }
+        }
+
+        public ID currentLeader() {
+            return currentLeader;
+        }
+
+        @Override
+        public Throwable fillInStackTrace() {
+            return this;
+        }
+
+    }
+
+}

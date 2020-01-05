@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<raft>
+    <cluster>
+        <remote>raft://127.0.0.1:6001</remote>
+        <remote>raft://127.0.0.1:6002</remote>
+        <local>raft://127.0.0.1:6003</local>
+    </cluster>
+    <timeout>
+        <tick>3000</tick>
+        <heartbeat>1</heartbeat>
+        <election>3</election>
+        <broadcast>0.5</broadcast>
+    </timeout>
+    <storage>
+        <log>/data0/raft3/log</log>
+        <state>/data0/raft3/state</state>
+        <locker>/data0/raft3/locker</locker>
+    </storage>
+</raft>
