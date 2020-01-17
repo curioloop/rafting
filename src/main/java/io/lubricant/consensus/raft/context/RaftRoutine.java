@@ -252,7 +252,8 @@ public class RaftRoutine implements AutoCloseable {
                 }
                 long lastApplied = machine.lastApplied();
                 if (lastApplied <= prevApplied) {
-                    break; // may be something wrong, retry latter
+                    logger.error("RaftContext({}) application stuck at {}", context.ctxID(), lastApplied);
+                    return false; // may be something wrong, retry latter
                 }
                 prevApplied = lastApplied;
             }

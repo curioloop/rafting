@@ -28,7 +28,7 @@ public class Candidate extends RaftMember {
 
         assertEventLoop();
 
-        if (term < currentTerm) { // leader could aware of a new election has benn held
+        if (term < currentTerm) { // leader could be aware of a new election has been held
             return RaftResponse.failure(currentTerm);
         }
 

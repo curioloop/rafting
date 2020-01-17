@@ -36,5 +36,4 @@ public interface RaftService {
             long term, ID candidateId,
             long lastLogIndex, long lastLogTerm) throws Exception;
 
-
 }

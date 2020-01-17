@@ -28,7 +28,7 @@ public class Follower extends RaftMember {
 
         assertEventLoop();
 
-        if (term < currentTerm) { // leader could aware of a new election has benn held
+        if (term < currentTerm) { // leader could be aware of a new election has been held
             return RaftResponse.failure(currentTerm);
         }
 
@@ -40,7 +40,7 @@ public class Follower extends RaftMember {
         }
 
         currentLeader = leaderId;
-        ctx.resetTimer(this);
+        ctx.resetTimer(this); // TODO: disable election timer may better
 
         if (! logContains(prevLogIndex, prevLogTerm)) {
             return RaftResponse.failure(currentTerm);
@@ -100,7 +100,7 @@ public class Follower extends RaftMember {
     private boolean logContains(long index, long term) throws Exception {
         if (index == 0 && term == 0) return true;
         if (index == 0 || term == 0) {
-            throw new AssertionError("index and term only be 0 at the same time");
+            throw new AssertionError("index and term should be 0 at the same time");
         }
         Entry entry = ctx.replicatedLog().get(index);
         return entry != null && entry.term() == term;

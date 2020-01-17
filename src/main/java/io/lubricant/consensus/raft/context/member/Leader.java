@@ -207,10 +207,7 @@ public class Leader extends RaftMember implements Leadership {
             } else {
                 commitIndex = fullIndex; // commit the entry from previous leader which replicated to all nodes
             }
-            if (commitIndex != 0) {
-                if (commitIndex < ctx.replicatedLog().lastCommitted()) {
-
-                }
+            if (commitIndex != 0 && commitIndex != ctx.replicatedLog().lastCommitted()) {
                 if (ctx.inEventLoop()) {
                     ctx.commitLog(commitIndex, false);
                 } else {
