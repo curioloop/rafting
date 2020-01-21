@@ -12,7 +12,7 @@ public class TimerTicket extends AtomicLong {
 
     public final static long TIMEOUT = -1; // 超时
     public final static long FENCING = -2; // 挤出
-    public final static long RESET = -3;   // 已重置
+    public final static long INVALID = -3; // 失效
 
     private final Membership membership;
     private final RaftParticipant participant;

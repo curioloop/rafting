@@ -1,11 +1,16 @@
 # rafting
-### Simplified Raft library implementation in Java
+### Raft library implemented in Java
 
 - Multi-Raft is supported
 - Only implement `AppendEntires` and `RequestVote`
 - Design focuses on understanding
 
-### According to the paper:
+### Architecture
+
+![Communication](img/Communication.png)
+![Status](img/Status.png)
+
+#### According to the paper:
 - Nodes communicate with RPC `RaftService`. 
 So we provide an Event-Based async RPC Framework based on **Netty** and **Kyro** in `io.lubricant.consensus.raft.transport`. 
 

@@ -88,7 +88,7 @@ public class RaftRoutine implements AutoCloseable {
 
         long deadline = Math.max( Math.min(moment, Long.MAX_VALUE - 1) + 1, now + timeout);
         boolean reset = exist == null ||
-                        exist.deadline().compareAndSet(moment, TimerTicket.RESET) &&
+                        exist.deadline().compareAndSet(moment, TimerTicket.INVALID) &&
                         exist.schedule().cancel(true);
 
         if (participant instanceof Leader || reset) { // reset == true means not timeout yet
