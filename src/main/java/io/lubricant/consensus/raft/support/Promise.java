@@ -28,8 +28,10 @@ public class Promise<V> implements Callable<V> {
     }
 
     public void timeout(long timeout, TimeLimited onTimeout) {
-        TimeLimited clean = () -> { this.timeout = null; };
-        this.timeout = TimeLimited.newTimer(timeout).schedule(clean.join(onTimeout));
+        this.timeout = TimeLimited.newTimer(timeout).schedule(() -> {
+            this.timeout = null;
+            onTimeout.timeout();
+        });
     }
 
     public void future(FutureTask<V> task) {
@@ -47,13 +49,7 @@ public class Promise<V> implements Callable<V> {
     }
 
     public void error(Exception cause) {
-        if (resultUpdater.compareAndSet(this, null, cause)) {
-            future.run();
-            ScheduledFuture timeout = this.timeout;
-            if (timeout != null) {
-                timeout.cancel(false);
-            }
-        }
+        complete(cause);
     }
 
 }

@@ -10,18 +10,18 @@ import org.slf4j.LoggerFactory;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ThreadLocalRandom;
 
-public class Cluster2 {
+public class TestNode1 {
 
-    private static final Logger logger = LoggerFactory.getLogger(Cluster2.class);
+    private static final Logger logger = LoggerFactory.getLogger(TestNode1.class);
 
     public static void main(String[] args) throws Exception {
-        RaftContainer container = new RaftContainer("raft2.xml");
+        RaftContainer container = new RaftContainer("raft1.xml");
         container.create(new FileBasedTestFactory());
         RaftClient root = container.getClient("root");
         while (true) {
             try {
                 int rand = ThreadLocalRandom.current().nextInt(100);
-                Boolean result = root.execute(new AppendCommand("cluster2-" + rand), 1000);
+                Boolean result = root.execute(new AppendCommand("node1-" + rand), 1000);
                 logger.info("execute result: {}", result);
             } catch (Throwable ex) {
                 if (ex instanceof ExecutionException) {

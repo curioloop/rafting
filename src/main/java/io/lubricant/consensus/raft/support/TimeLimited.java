@@ -12,10 +12,6 @@ public interface TimeLimited {
 
     void timeout();
 
-    default TimeLimited join(TimeLimited timeLimited) {
-        return () -> { timeout(); timeLimited.timeout(); };
-    }
-
     /**
      * 定时器
      */

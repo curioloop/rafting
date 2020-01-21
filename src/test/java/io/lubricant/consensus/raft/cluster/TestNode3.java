@@ -10,9 +10,9 @@ import org.slf4j.LoggerFactory;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ThreadLocalRandom;
 
-public class Cluster3 {
+public class TestNode3 {
 
-    private static final Logger logger = LoggerFactory.getLogger(Cluster3.class);
+    private static final Logger logger = LoggerFactory.getLogger(TestNode3.class);
 
     public static void main(String[] args) throws Exception {
         RaftContainer container = new RaftContainer("raft3.xml");
@@ -21,7 +21,7 @@ public class Cluster3 {
         while (true) {
             try {
                 int rand = ThreadLocalRandom.current().nextInt(100);
-                Boolean result = root.execute(new AppendCommand("cluster3-" + rand), 1000);
+                Boolean result = root.execute(new AppendCommand("node3-" + rand), 1000);
                 logger.info("execute result: {}", result);
             } catch (Throwable ex) {
                 if (ex instanceof ExecutionException) {
