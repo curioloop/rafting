@@ -30,14 +30,18 @@ public class EventCodec {
     private final static byte SOH = 0x01; // Start Of Headline
     private final static byte STX = 0x02; // Start Of Text
     private final static byte ETX = 0x03; // End Of Text
-    // event
     private final static byte EOT = 0x04; // End Of Transmission
+    // event
     private final static byte ENQ = 0x05; // Enquiry
     private final static byte ACK = 0x06; // Acknowledge
     private final static byte SYN = 0x16; // Synchronous Idle
+    // snap
+    private final static byte MW = (byte)0x95; // Message Waiting
+    private final static byte PM = (byte)0x9E; // Private Message
 
     private static final class EventFrame {
         byte type = NUL;
+        boolean isEnding;
         boolean hasSequence;
         int sequence;
         int headLength = -1;
@@ -68,9 +72,7 @@ public class EventCodec {
                 frame.head = e.source().scope();
                 frame.body = e.message();
 
-                if (event instanceof OneWayEvent) {
-                    frame.type = EOT;
-                } else if (event instanceof PingEvent) {
+                if (event instanceof PingEvent) {
                     frame.type = ENQ;
                 } else if (event instanceof PongEvent) {
                     frame.type = ACK;
@@ -87,6 +89,10 @@ public class EventCodec {
 
                 if (event instanceof ShakeHandEvent) {
                     frame.type = SYN;
+                } else if (event instanceof WaitSnapEvent) {
+                    frame.type = MW;
+                } else if (event instanceof TransSnapEvent) {
+                    frame.type = PM;
                 } else {
                     logger.error("unknown StrEvent : {}", event);
                     return;
@@ -94,6 +100,7 @@ public class EventCodec {
             }
 
             if (frame != null) {
+                frame.isEnding = event instanceof Event.Ending;
                 frame.headLength = frame.head.length();
                 if (event instanceof Event.SeqEvent) {
                     frame.hasSequence = true;
@@ -112,6 +119,10 @@ public class EventCodec {
         protected void decode(ChannelHandlerContext context, EventFrame frame, List<Object> list) throws Exception {
             if (frame.type == SYN) {
                 list.add(new ShakeHandEvent(frame.head));
+            } else if (frame.type == MW) {
+                list.add(new WaitSnapEvent(frame.head));
+            } else if (frame.type == PM) {
+                list.add(new TransSnapEvent(frame.head));
             } else {
                 logger.error("unsupported frame type " + frame.type);
             }
@@ -134,8 +145,6 @@ public class EventCodec {
                 Event event;
                 EventID id = new EventID(frame.head, nodeID);
                 switch (frame.type) {
-                    case EOT: event = new OneWayEvent(id, frame.body);
-                        break;
                     case ENQ: event = new PingEvent(id, frame.body, frame.sequence);
                         break;
                     case ACK: event = new PongEvent(id, frame.body, frame.sequence);
@@ -182,6 +191,9 @@ public class EventCodec {
                     buf.setInt(i, len);
                 }
                 buf.writeByte(ETX);
+                if (event.isEnding) {
+                    buf.writeByte(EOT);
+                }
             } catch (Exception e) {
                 buf.resetWriterIndex();
                 logger.error("encode event frame error", e);
@@ -206,6 +218,7 @@ public class EventCodec {
 
     static class FrameDecoder extends ByteToMessageDecoder {
 
+        private boolean transparent = false;
         private EventFrame state;
 
         private void verify(ByteBuf buf, byte expect) {
@@ -213,6 +226,14 @@ public class EventCodec {
             if (result != expect) {
                 throw new DecoderException(result + " != " + expect);
             }
+        }
+
+        private byte verify(ByteBuf buf, byte expect, byte option) {
+            byte result = buf.readByte();
+            if (result != expect && result != option) {
+                throw new DecoderException(result + " != " + expect + "," + option);
+            }
+            return result;
         }
 
         private void readType(ByteBuf buf, EventFrame state) {
@@ -259,11 +280,21 @@ public class EventCodec {
 
         @Override
         protected void decode(ChannelHandlerContext context, ByteBuf buf, List<Object> frames) throws Exception {
+            if (transparent) {
+                // 透传数据而不直接调用 ctx.pipeline().remove(FrameDecoder.class) 的原因：
+                // 1. ctx.pipeline().remove 会触发 ctx.handler().handlerRemoved 回调，此时如果 buf 存在未读消息，会再次调用 decode 解析剩余数据
+                // 2. 后续数据到达时，NioEventLoop.processSelectedKey 会异步触发 ByteToMessageDecoder.channelRead 间接调用 decode
+                // 以上两种情况都会致使 decode 读到非法的字节流，导致解析失败
+                context.fireChannelRead(buf);
+                return;
+            }
             // |SOH|TYPE|{SEQUENCE}|STX|HEAD_LEN|HEAD|BODY_LEN|{BODY}|ETX
             try {
                 while (buf.isReadable()) {
                     if (state == null) {
-                        verify(buf, SOH);
+                        if (transparent = (EOT == verify(buf, SOH, EOT))) {
+                            return;
+                        }
                         state = new EventFrame();
                     } else {
                         EventFrame s = state;

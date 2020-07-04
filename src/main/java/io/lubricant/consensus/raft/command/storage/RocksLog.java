@@ -9,15 +9,23 @@ import org.slf4j.LoggerFactory;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Future;
 
 public class RocksLog implements RaftLog, Closeable {
 
     private static final org.slf4j.Logger logger = LoggerFactory.getLogger(RocksLog.class);
+    private static final byte[] DEFAULT = "default".getBytes(StandardCharsets.UTF_8);
+    private static final byte[] EPOCH = "epoch".getBytes(StandardCharsets.UTF_8);
+    private static final byte[] INDEX = "index".getBytes(StandardCharsets.UTF_8);
+    private static final byte[] TERM = "term".getBytes(StandardCharsets.UTF_8);
 
     static class Logger extends org.rocksdb.Logger {
-        public Logger(Options options) {
+        public Logger(DBOptions options) {
             super(options);
         }
         @Override
@@ -33,18 +41,35 @@ public class RocksLog implements RaftLog, Closeable {
     }
 
     private RocksDB db;
+    private ColumnFamilyHandle epoch;
     private RocksSerializer serializer;
     private volatile long commitIndex;
+    private volatile Entry epochEntry;
     private volatile Entry lastEntry;
     private volatile boolean closed;
 
     public RocksLog(String path, RocksSerializer serializer) throws Exception {
-        Options options = new Options().setCreateIfMissing(true);
-        options.setManualWalFlush(true);
+        DBOptions options = new DBOptions().
+                setCreateIfMissing(true).
+                setCreateMissingColumnFamilies(true).
+                setManualWalFlush(true);
         options.setLogger(new Logger(options));
-        this.db = RocksDB.open(options, path);
+
+        List<ColumnFamilyHandle> handles = new ArrayList<>(2);
+        this.db = RocksDB.open(options, path, Arrays.asList(
+                new ColumnFamilyDescriptor(EPOCH),
+                new ColumnFamilyDescriptor(DEFAULT)), handles);
         this.serializer = serializer;
         this.lastEntry = lastEntry();
+
+        this.epoch = handles.get(0);
+        byte[] index = this.db.get(epoch, INDEX);
+        byte[] term = this.db.get(epoch, TERM);
+        if (index == null) {
+            this.epochEntry = new EntryKey(0L, 0L);
+        } else {
+            this.epochEntry = new EntryKey(bytesToLong(index), bytesToLong(term));
+        }
     }
 
     @Override
@@ -78,6 +103,11 @@ public class RocksLog implements RaftLog, Closeable {
     }
 
     @Override
+    public Entry epoch() throws Exception {
+        return epochEntry;
+    }
+
+    @Override
     public Entry last() throws Exception {
         return lastEntry;
     }
@@ -93,6 +123,15 @@ public class RocksLog implements RaftLog, Closeable {
 
     @Override
     public Entry[] batch(long index, int length) throws Exception {
+        if (index < epochEntry.index()) {
+            throw new IllegalStateException("leakage");
+        } else if (index == epochEntry.index()) {
+            index++;
+            length--;
+        }
+
+        if (length <= 0) return new Entry[0];
+
         List<byte[]> keys = new ArrayList<>(length);
         for (int i = 0; i < length; i++) {
             long cursor = index + i;
@@ -178,6 +217,24 @@ public class RocksLog implements RaftLog, Closeable {
             db.deleteRange(longToBytes(index), longToBytes(last.index() + 1));
         }
         lastEntry = lastEntry();
+    }
+
+    @Override
+    public Future<Boolean> flush(long index) throws Exception {
+        long epochIndex = epochEntry.index();
+        long lastIndex = lastEntry.index();
+        if (index < epochIndex || lastIndex < index) {
+            throw new IndexOutOfBoundsException(
+                    String.format("index:%d, bound:(%d,%d]", index, epochIndex, lastIndex));
+        }
+        Entry newEpoch = new EntryKey(get(index));
+        db.deleteRange(longToBytes(epochIndex), longToBytes(index));
+        db.put(epoch, INDEX, longToBytes(newEpoch.index()));
+        db.put(epoch, TERM, longToBytes(newEpoch.term()));
+        db.flushWal(true);
+        epochEntry = newEpoch;
+        lastEntry = lastEntry();
+        return CompletableFuture.completedFuture(true);
     }
 
     private Entry lastEntry() {

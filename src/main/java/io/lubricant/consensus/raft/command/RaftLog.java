@@ -1,6 +1,7 @@
 package io.lubricant.consensus.raft.command;
 
 import java.io.Serializable;
+import java.util.concurrent.Future;
 
 import io.lubricant.consensus.raft.command.RaftClient.Command;
 
@@ -19,6 +20,52 @@ public interface RaftLog extends AutoCloseable {
     }
 
     /**
+     * 日志条目 Key
+     */
+    class EntryKey implements Entry, Comparable<EntryKey> {
+
+        private final long index, term;
+
+        public EntryKey(long index, long term) {
+            this.index = index;
+            this.term = term;
+        }
+
+        public EntryKey(Entry entry) {
+            this(entry.index(), entry.term());
+        }
+
+        @Override
+        public long index() {
+            return index;
+        }
+
+        @Override
+        public long term() {
+            return term;
+        }
+
+        @Override
+        public int hashCode() {
+            return Long.hashCode(index ^ term);
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (obj instanceof EntryKey) {
+                EntryKey key = (EntryKey) obj;
+                return index == key.index && term == key.term;
+            }
+            return false;
+        }
+
+        @Override
+        public int compareTo(EntryKey o) {
+            return index != o.index ? Long.compare(index, o.index) : Long.compare(term, o.term);
+        }
+    }
+
+    /**
      * 新建条目并追加到日志末尾
      * 单线程访问
      */
@@ -34,6 +81,11 @@ public interface RaftLog extends AutoCloseable {
      * 单线程访问
      */
     boolean markCommitted(long commitIndex) throws Exception;
+
+    /**
+     * 日志起点（该位置的日志已被归档）
+     */
+    Entry epoch() throws Exception;
 
     /**
      * 最后一条日志（没有任何日志时返回 null）
@@ -68,4 +120,9 @@ public interface RaftLog extends AutoCloseable {
      */
     void truncate(long index) throws Exception;
 
+    /**
+     * 清空日志数据至指定位置（index 单调递增）
+     * 单线程访问
+     */
+    Future<Boolean> flush(long index) throws Exception;
 }

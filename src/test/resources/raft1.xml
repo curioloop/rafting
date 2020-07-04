@@ -15,5 +15,6 @@
         <log>/data0/raft1/log</log>
         <state>/data0/raft1/state</state>
         <locker>/data0/raft1/locker</locker>
+        <snapshot>/data0/raft1/snapshot</snapshot>
     </storage>
 </raft>

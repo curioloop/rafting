@@ -61,7 +61,7 @@ public class RaftContainer {
         }
         if (active) synchronized (this) {
             if (active) {
-                RaftContext context = manager.getContext(contextId);
+                RaftContext context = manager.getContext(contextId, true);
                 client = new RaftClient(context, clientMap);
                 clientMap.put(contextId, client);
             }

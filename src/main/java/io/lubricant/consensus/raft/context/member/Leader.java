@@ -29,7 +29,7 @@ public class Leader extends RaftMember implements Leadership {
     private void prepareReplication() throws Exception {
         if (followerStatus != null) return;
         Entry last = ctx.replicatedLog().last();
-        long lastIndex = last == null ? 0: last.index();
+        long lastIndex = last == null ? ctx.replicatedLog().epoch().index(): last.index();
         Set<ID> followers = ctx.cluster().remoteIDs();
         Map<ID, State> map = new ConcurrentHashMap<>(followers.size());
         for (ID follower : followers) {
@@ -100,7 +100,7 @@ public class Leader extends RaftMember implements Leadership {
     public void acceptCommand(Command command, Promise promise) {
         try {
             if (replication.isAborted()) {
-                promise.error(new NotLeaderException(ctx.participant()));
+                promise.completeExceptionally(new NotLeaderException(ctx.participant()));
                 return;
             }
             ctx.acceptCommand(currentTerm, command, promise);
@@ -120,6 +120,7 @@ public class Leader extends RaftMember implements Leadership {
             return; // fenced by other event
         }
 
+        final Entry epoch = ctx.replicatedLog().epoch();
         final long leaderCommit = ctx.replicatedLog().lastCommitted();
         final long timeout = ctx.envConfig().broadcastTimeout();
         final long now = System.currentTimeMillis();
@@ -128,36 +129,50 @@ public class Leader extends RaftMember implements Leadership {
             state.increaseMono(lastRequest, state.lastRequest, now);
             RaftService raftService = ctx.cluster().remoteService(id, ctx.ctxID());
             if (raftService != null) {
-                Entry[] entries = null;
-                long prevTerm = 0, prevIndex = 0, lastIndex;
-                long nextIndex = state.nextIndex - (state.nextIndex == 0 ? 0 : 1);
+                long prevTerm = epoch.term(), prevIndex = epoch.index(), lastIndex;
+                long nextIndex = state.nextIndex - (state.nextIndex == epoch.index() ? 0 : 1);
                 try {
-                    if (heartbeat) {
-                        Entry prevEntry = ctx.replicatedLog().get(nextIndex);
-                        if (prevEntry != null) {
+                    if (state.pendingInstallation) {
+                        logger.debug("InstallSnapshot[{}] {} {} {} {}", id, currentTerm, ctx.nodeID(), epoch.index(), epoch.term());
+
+                        Async<RaftResponse> response = raftService.installSnapshot(currentTerm, ctx.nodeID(), epoch.index(), epoch.term());
+                        requestInFlight.incrementAndGet(state);
+                        response.on(head, timeout, (result, error, canceled) -> {
+                            logger.debug("Response[{}]({}/{}) {} {}", id, nextIndex, result, error, canceled);
+                            requestInFlight.decrementAndGet(state);
+                            if (canceled) return;
+                            if (error == null && result != null) {
+                                if (result.term() > currentTerm) {
+                                    head.abortRequests();
+                                    ctx.trySwitchTo(Follower.class, result.term(), id);
+                                } else {
+                                    if (result.success()) {
+                                        state.pendingInstallation = false;
+                                    }
+                                }
+                            }
+                        });
+                        continue; // wait for the installation to complete ...
+                    }
+
+                    int fetchLimit = REPLICATE_LIMIT >> (heartbeat ? 1: 0);
+                    Entry[] entries = ctx.replicatedLog().batch(nextIndex, fetchLimit + 1);
+                    if (entries != null && entries.length > 0) {
+                        Entry prevEntry = entries[0];
+                        if (prevEntry.index() == nextIndex) {
                             prevTerm = prevEntry.term();
                             prevIndex = prevEntry.index();
+                            entries = Arrays.copyOfRange(entries, 1, entries.length);
+                        } else if (prevEntry.index() != epoch.index() + 1) {
+                            throw new AssertionError("log index should start with epoch.index + 1");
                         }
-                        lastIndex = prevIndex;
-                    } else {
-                        entries = ctx.replicatedLog().batch(nextIndex, REPLICATE_LIMIT + 1);
-                        if (entries != null && entries.length > 0) {
-                            Entry prevEntry = entries[0];
-                            if (prevEntry.index() == nextIndex) {
-                                prevTerm = prevEntry.term();
-                                prevIndex = prevEntry.index();
-                                entries = Arrays.copyOfRange(entries, 1, entries.length);
-                            } else if (prevEntry.index() != 1) {
-                                throw new AssertionError("log index should start with 1");
-                            }
-                            if (entries.length == 0) {
-                                lastIndex = prevIndex;
-                            } else {
-                                lastIndex = entries[entries.length - 1].index();
-                            }
+                        if (entries.length == 0) {
+                            lastIndex = prevIndex;
                         } else {
-                            lastIndex = 0;
+                            lastIndex = entries[entries.length - 1].index();
                         }
+                    } else {
+                        lastIndex = epoch.index();
                     }
 
                     logger.debug("AppendEntries[{}] {} {} {} {} {} {}", id, currentTerm, ctx.nodeID(), prevIndex, prevTerm, entries, leaderCommit);
@@ -165,29 +180,32 @@ public class Leader extends RaftMember implements Leadership {
                     Async<RaftResponse> response = raftService.appendEntries(currentTerm, ctx.nodeID(), prevIndex, prevTerm, entries, leaderCommit);
                     requestInFlight.incrementAndGet(state);
                     response.on(head, timeout, (result, error, canceled) -> {
-
                         logger.debug("Response[{}]({}/{}) {} {} {}", id, nextIndex, lastIndex, result, error, canceled);
-
                         requestInFlight.decrementAndGet(state);
-                        if (canceled) return;
-                        if (error == null && result != null) {
+                        if (! canceled && error == null && result != null) {
                             if (result.term() > currentTerm) {
                                 head.abortRequests();
                                 ctx.trySwitchTo(Follower.class, result.term(), id);
                             } else {
                                 state.updateIndex(lastIndex, result.success());
                                 if (result.success()) {
-                                    state.increaseMono(requestSuccess, state.requestSuccess, now);
                                     tryCommit();
                                 } else {
-                                    state.increaseMono(requestFailure, state.requestFailure, now);
+                                    if (state.nextIndex == epoch.index()) {
+                                        state.pendingInstallation = true;
+                                    }
                                 }
+                                state.statSuccess(now);
                             }
+                        } else if (error != null) {
+                            state.statFailure(now);
                         }
                     });
                 } catch (Exception e) {
                     logger.error("Invoke appendEntries failed {} {}", ctx.ctxID(), id, e);
                 }
+            } else {
+                state.statFailure(now); // service is not available
             }
         }
     }

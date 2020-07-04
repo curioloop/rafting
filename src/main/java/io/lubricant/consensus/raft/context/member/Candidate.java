@@ -87,8 +87,11 @@ public class Candidate extends RaftMember {
         long lastLogTerm;
         try {
             Entry last = ctx.replicatedLog().last();
-            lastLogIndex = last == null? -1: last.index();
-            lastLogTerm = last == null? -1: last.term();
+            if (last == null) {
+                last = ctx.replicatedLog().epoch();
+            }
+            lastLogIndex = last.index();
+            lastLogTerm = last.term();
         } catch (Exception e) {
             logger.error("Start election failed {} ", ctx.ctxID(), e);
             return;

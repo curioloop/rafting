@@ -1,6 +1,5 @@
 package io.lubricant.consensus.raft.transport.rpc;
 
-import io.lubricant.consensus.raft.support.Promise;
 import io.lubricant.consensus.raft.support.TimeLimited;
 import io.lubricant.consensus.raft.transport.EventNode;
 import io.lubricant.consensus.raft.transport.event.*;
@@ -53,7 +52,7 @@ public class AsyncService {
     }
 
 
-    public class Invocation<V> extends Promise<V> implements TimeLimited, BiConsumer<PongEvent, Class<V>> {
+    public class Invocation<V> extends CompletableFuture<V> implements Callable<V>, TimeLimited, BiConsumer<PongEvent, Class<V>> {
 
         private final InvokeID id;
 
@@ -75,11 +74,16 @@ public class AsyncService {
                 try {
                     complete((V)event.message());
                 } catch (Exception ex) {
-                    error(ex);
+                    completeExceptionally(ex);
                 }
             } else {
                 throw new IllegalArgumentException(event.source() + " != " + id);
             }
+        }
+
+        @Override
+        public V call() throws Exception {
+            return get();
         }
     }
 
@@ -92,19 +96,16 @@ public class AsyncService {
         final EventID eventID = new EventID(scope, node.id());
         final InvokeID invokeID = new InvokeID(eventID.scope(), sequence.getAndIncrement());
         final Invocation<V> invocation = new Invocation<>(invokeID);
-        return Async.call(new Executor() {
-            @Override
-            public void execute(Runnable ignored) {
-                Channel channel = node.channel();
-                if (channel != null) {
-                    invocations.put(invokeID, invocation);
-                    try {
-                        channel.writeAndFlush(new PingEvent(eventID, params, invokeID.sequence));
-                    } catch (Exception e) {
-                        Invocation i = invocations.remove(invokeID);
-                        if (i != null) {
-                            i.error(e);
-                        }
+        return Async.call( ignored -> {
+            Channel channel = node.channel();
+            if (channel != null) {
+                invocations.put(invokeID, invocation);
+                try {
+                    channel.writeAndFlush(new PingEvent(eventID, params, invokeID.sequence));
+                } catch (Exception e) {
+                    Invocation i = invocations.remove(invokeID);
+                    if (i != null) {
+                        i.completeExceptionally(e);
                     }
                 }
             }
@@ -119,11 +120,11 @@ public class AsyncService {
             Async.AsyncFuture<T> future = new Async.AsyncFuture<T>(call, callback, timer, head) {
                 @Override
                 public void timeout() {
-                    super.timeout();
+                    super.timeout(); // 共享 timeout 定时器，减少不必要定时任务
                     invocation.timeout();
                 }
             };
-            invocation.future(future);
+            invocation.thenRun(future); // RPC 完成后通知调用者
             return future;
         };
     }

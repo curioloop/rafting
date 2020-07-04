@@ -1,16 +1,18 @@
 package io.lubricant.consensus.raft.context;
 
+import io.lubricant.consensus.raft.command.MaintainAgreement;
 import io.lubricant.consensus.raft.command.RaftClient.Command;
 import io.lubricant.consensus.raft.context.member.Follower;
-import io.lubricant.consensus.raft.context.member.Leadership.EntryKey;
 import io.lubricant.consensus.raft.context.member.Membership;
 import io.lubricant.consensus.raft.context.member.TimerTicket;
 import io.lubricant.consensus.raft.support.*;
 import io.lubricant.consensus.raft.transport.RaftCluster;
 import io.lubricant.consensus.raft.transport.RaftCluster.ID;
+import io.lubricant.consensus.raft.transport.RaftCluster.SnapService;
 import io.lubricant.consensus.raft.RaftParticipant;
 import io.lubricant.consensus.raft.command.RaftLog;
 import io.lubricant.consensus.raft.command.RaftLog.Entry;
+import io.lubricant.consensus.raft.command.RaftLog.EntryKey;
 import io.lubricant.consensus.raft.command.RaftMachine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,6 +36,7 @@ public class RaftContext {
     private RaftLog replicatedLog; // 复制日志
     private RaftMachine stateMachine; // 状态机
     private StableLock stableStorage; // 持久化文件
+    private SnapshotArchive snapArchive; // 快照档案
 
     private RaftCluster cluster; // 集群
     private RaftRoutine routine; // 例程
@@ -45,12 +48,17 @@ public class RaftContext {
     final AtomicReference<Membership> membershipFilter = new AtomicReference<>(); // 支持抢占切换
     final AtomicInteger commitVersion = new AtomicInteger(); //
 
-    public RaftContext(String id, StableLock lock, RaftConfig config, RaftLog log, RaftMachine machine) {
+    final MaintainAgreement maintainAgreement = new MaintainAgreement();
+    PendingTask<Void> snapshotInstallation;
+
+    public RaftContext(String id, StableLock lock, SnapshotArchive snap, RaftConfig config, RaftLog log, RaftMachine machine) throws Exception {
         this.id = id;
         this.envConfig = config;
         this.replicatedLog = log;
         this.stateMachine = machine;
         this.stableStorage = lock;
+        this.snapArchive = snap;
+        maintainAgreement.minimalLogIndex(replicatedLog.epoch().index());
     }
 
     public void initialize(RaftCluster cluster, RaftRoutine routine, EventLoop eventLoop) {
@@ -100,14 +108,15 @@ public class RaftContext {
     public RaftLog replicatedLog() { return replicatedLog; }
     public RaftMachine stateMachine() { return stateMachine; }
     public StableLock stableStorage() { return stableStorage; }
+    public SnapshotArchive snapArchive() { return snapArchive; }
     public EventLoop eventLoop() { return eventLoop; }
 
 
     /**
      * 重置定时器
      */
-    public boolean resetTimer(RaftParticipant participant) {
-        return routine.resetTimer(this, participant);
+    public boolean resetTimer(RaftParticipant participant, boolean muted) {
+        return routine.resetTimer(this, participant, muted);
     }
 
     /**
@@ -145,7 +154,7 @@ public class RaftContext {
      */
     public void acceptCommand(long currentTerm, Command command, Promise promise) throws Exception {
         if (! inEventLoop()) {
-            throw new AssertionError("accept command should be trigger in event loop");
+            throw new AssertionError("accept command should be triggered in event loop");
         }
         Entry entry = replicatedLog().newEntry(currentTerm, command);
         EntryKey key = new EntryKey(entry);
@@ -153,7 +162,7 @@ public class RaftContext {
         promise.timeout(envConfig().broadcastTimeout(), () -> {
             Promise p = commandPromises.remove(key);
             if (p != null) {
-                p.error(new TimeoutException());
+                p.completeExceptionally(new TimeoutException());
             }
         });
     }
@@ -165,13 +174,14 @@ public class RaftContext {
      */
     public void commitLog(long commitIndex, boolean passiveCommit) throws Exception {
         if (! inEventLoop()) {
-            throw new AssertionError("commit log should be trigger in event loop");
+            throw new AssertionError("commit log should be triggered in event loop");
         }
         if (replicatedLog().markCommitted(commitIndex) ||
                 passiveCommit && replicatedLog().lastCommitted() > stateMachine().lastApplied()) {
             // warning: remove the promise once the command is applied
             routine.commitState(this, (e) -> commandPromises.remove(new EntryKey(e)), 2);
         }
+        routine.compactLog(this);
     }
 
     /**
@@ -181,4 +191,30 @@ public class RaftContext {
         commandPromises.clear();
     }
 
+    /**
+     * 同步快照信息：下载快照 + 应用快照
+     * @param leaderId 当前 leader
+     * @param lastIncludedIndex 快照中包含的最后一条日志索引
+     * @param lastIncludedTerm 最后一条日志记录对应的任期
+     */
+    public boolean installSnapshot(ID leaderId, long lastIncludedIndex, long lastIncludedTerm) throws Exception {
+        if (! inEventLoop()) {
+            throw new AssertionError("install snapshot should be performed in event loop");
+        }
+        return routine.installSnapshot(this, lastIncludedIndex, lastIncludedTerm, () -> {
+            SnapService snapService = cluster().remoteService(leaderId, ctxID());
+            return snapService.obtainSnapshot(lastIncludedIndex, lastIncludedTerm);
+        });
+    }
+
+    /**
+     * 停止同步快照
+     */
+    public void abortSnapshot() {
+        snapArchive.cleanPending();
+        if (snapshotInstallation != null) {
+            snapshotInstallation.cancel(false);
+            snapshotInstallation = null;
+        }
+    }
 }

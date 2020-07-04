@@ -9,6 +9,8 @@ import io.lubricant.consensus.raft.transport.RaftCluster.ID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Arrays;
+
 public class Follower extends RaftMember {
 
     private static final Logger logger = LoggerFactory.getLogger(Follower.class);
@@ -40,32 +42,39 @@ public class Follower extends RaftMember {
         }
 
         currentLeader = leaderId;
-        ctx.resetTimer(this); // TODO: disable election timer may better
+        ctx.resetTimer(this, true);
+        try {
 
-        if (! logContains(prevLogIndex, prevLogTerm)) {
-            return RaftResponse.failure(currentTerm);
+            if (! logContains(prevLogIndex, prevLogTerm)) {
+                return RaftResponse.failure(currentTerm);
+            }
+
+            // skip entries before log epoch
+            entries = purgeEntries(entries);
+
+            logger.debug("Request[{}]({}) {} {} {} {}", leaderId, term, prevLogIndex, prevLogTerm, leaderCommit, entries);
+
+            // leader may send heartbeat without log entries
+            if (entries != null && entries.length > 0) {
+                RaftLog log = ctx.replicatedLog();
+
+                Entry conflict = log.conflict(entries);
+                if (conflict != null) {
+                    log.truncate(conflict.index());
+                }
+                log.append(entries); // sync to disk
+
+                Entry last = log.last();
+                if (leaderCommit != 0 && last != null) {
+                    // truncate commit index when it exceed the last index
+                    ctx.commitLog(Math.min(leaderCommit, last.index()), true);
+                }
+            }
+
+        } finally {
+            ctx.resetTimer(this, false);
         }
 
-        logger.debug("Request[{}]({}) {} {} {} {}", leaderId, term, prevLogIndex, prevLogTerm, leaderCommit, entries);
-
-        // leader may send heartbeat without log entries
-        if (entries != null && entries.length > 0) {
-            RaftLog log = ctx.replicatedLog();
-
-            Entry conflict = log.conflict(entries);
-            if (conflict != null) {
-                log.truncate(conflict.index());
-            }
-            log.append(entries); // sync to disk
-
-            Entry last = log.last();
-            if (leaderCommit != 0 && last != null) {
-                // truncate commit index when it exceed the last index
-                ctx.commitLog(Math.min(leaderCommit, last.index()), true);
-            }
-        }
-
-        ctx.resetTimer(this);
         return RaftResponse.success(term);
     }
 
@@ -89,6 +98,20 @@ public class Follower extends RaftMember {
     }
 
     @Override
+    public RaftResponse installSnapshot(long term, ID leaderId, long lastIncludedIndex, long lastIncludedTerm) throws Exception {
+        if (term >= currentTerm) {
+            throw new AssertionError("leader invoke InstallSnapshot before AppendEntries");
+        }
+        ctx.resetTimer(this, true);
+        try {
+            boolean success = ctx.installSnapshot(leaderId, lastIncludedIndex, lastIncludedTerm);
+            return RaftResponse.reply(currentTerm, success);
+        } finally {
+            ctx.resetTimer(this, false);
+        }
+    }
+
+    @Override
     public void onTimeout() {
         ctx.switchTo(Candidate.class, currentTerm + 1, ctx.nodeID());
         RaftParticipant participant = ctx.participant();
@@ -97,10 +120,22 @@ public class Follower extends RaftMember {
         }
     }
 
+    @Override
+    public void onFencing() {
+        ctx.abortSnapshot();
+    }
+
     private boolean logContains(long index, long term) throws Exception {
         if (index == 0 && term == 0) return true;
         if (index == 0 || term == 0) {
             throw new AssertionError("index and term should be 0 at the same time");
+        }
+        Entry epoch = ctx.replicatedLog().epoch();
+        if (index <= epoch.index()) {
+            if (index == epoch.index() && term != epoch.term()) {
+                throw new AssertionError("committed index and term should be exactly the same");
+            }
+            return true;
         }
         Entry entry = ctx.replicatedLog().get(index);
         return entry != null && entry.term() == term;
@@ -108,8 +143,32 @@ public class Follower extends RaftMember {
 
     private boolean logUpToDate(long index, long term) throws Exception {
         Entry last = ctx.replicatedLog().last();
-        return last == null || term > last.term() ||
-                (term == last.term() && index > last.index());
+        if (last != null) {
+            return term > last.term() || (term == last.term() && index > last.index());
+        } else {
+            Entry epoch = ctx.replicatedLog().epoch();
+            if (index > epoch.index() && term < epoch.term() ||
+                index == epoch.index() && term != epoch.term()) {
+                throw new AssertionError(String.format(
+                        "impossible log status: follower-epoch(%d:%d) candidate-last(%d:%d)",
+                        epoch.index(), epoch.term(), index, term));
+            }
+            return index >= epoch.index();
+        }
+    }
+
+    private Entry[] purgeEntries(Entry[] entries) throws Exception {
+        long epochIndex = ctx.replicatedLog().epoch().index();
+        if (entries != null && entries.length > 0 && entries[0].index() <= epochIndex) {
+            int cursor = 0;
+            while (entries[cursor].index() <= epochIndex && ++cursor < entries.length);
+            if (cursor == entries.length) {
+                entries = null;
+            } else {
+                entries = Arrays.copyOfRange(entries, cursor, entries.length - cursor);
+            }
+        }
+        return entries;
     }
 
 }

@@ -36,4 +36,15 @@ public interface RaftService {
             long term, ID candidateId,
             long lastLogIndex, long lastLogTerm) throws Exception;
 
+    /**
+     * 同步快照（由 leader 调用）
+     * @param term leader 任期
+     * @param leaderId leader 在集群中的唯一标识
+     * @param lastIncludedIndex 快照将替换所有条目，直至包括该索引
+     * @param lastIncludedTerm lastIncludedIndex 对应的任期
+     * @return 当同步完成时返回 true
+     */
+    Async<RaftResponse> installSnapshot(
+            long term, ID leaderId,
+            long lastIncludedIndex, long lastIncludedTerm) throws Exception;
 }

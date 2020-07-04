@@ -19,12 +19,7 @@ public class AsyncFutureTest {
             }
         };
 
-        Async<String> call = Async.call(e, new Callable<String>() {
-            @Override
-            public String call() throws Exception {
-                return null;
-            }
-        }, null);
+        Async<String> call = Async.call(e, () -> null, null);
 
         Async.AsyncHead head = head();
         for (int i=0; i<5; i++) {

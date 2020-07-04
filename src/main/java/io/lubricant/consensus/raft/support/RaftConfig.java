@@ -32,6 +32,7 @@ public class RaftConfig {
     private final String logPath;
     private final String statePath;
     private final String lockerPath;
+    private final String snapshotPath;
 
     public RaftConfig(String configPath, boolean classpath) throws Exception {
 
@@ -89,6 +90,7 @@ public class RaftConfig {
             String logDir = (String) xPath.evaluate("storage/log", config, XPathConstants.STRING);
             String stateDir = (String) xPath.evaluate("storage/state", config, XPathConstants.STRING);
             String lockerDir = (String) xPath.evaluate("storage/locker", config, XPathConstants.STRING);
+            String snapshotDir = (String) xPath.evaluate("storage/snapshot", config, XPathConstants.STRING);
             if (logDir == null || logDir.isEmpty()) {
                 throw new IllegalArgumentException("storage/log");
             }
@@ -97,6 +99,9 @@ public class RaftConfig {
             }
             if (lockerDir == null || lockerDir.isEmpty()) {
                 throw new IllegalArgumentException("storage/lock");
+            }
+            if (snapshotDir == null || snapshotDir.isEmpty()) {
+                throw new IllegalArgumentException("storage/snapshot");
             }
 
             this.localURI = URI.create(local);
@@ -114,6 +119,7 @@ public class RaftConfig {
             this.logPath = logDir + (logDir.endsWith(File.separator) ? "": File.separator);
             this.statePath = stateDir + (stateDir.endsWith(File.separator) ? "": File.separator);
             this.lockerPath = lockerDir + (lockerDir.endsWith(File.separator) ? "": File.separator);
+            this.snapshotPath = snapshotDir + (lockerDir.endsWith(File.separator) ? "": File.separator);
         }
     }
 
@@ -122,6 +128,8 @@ public class RaftConfig {
     public Path statePath() { return Paths.get(statePath); }
 
     public Path lockerPath() { return Paths.get(lockerPath); }
+
+    public Path snapshotPath() { return Paths.get(snapshotPath); }
 
     public URI localURI() { return localURI; }
 

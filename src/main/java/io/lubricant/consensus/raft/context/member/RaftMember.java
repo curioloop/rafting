@@ -1,6 +1,7 @@
 package io.lubricant.consensus.raft.context.member;
 
 import io.lubricant.consensus.raft.RaftParticipant;
+import io.lubricant.consensus.raft.RaftResponse;
 import io.lubricant.consensus.raft.context.RaftContext;
 import io.lubricant.consensus.raft.transport.RaftCluster.ID;
 
@@ -56,4 +57,11 @@ public abstract class RaftMember implements RaftParticipant {
         return lastCandidate;
     }
 
+    @Override
+    public RaftResponse installSnapshot(long term, ID leaderId, long lastIncludedIndex, long lastIncludedTerm) throws Exception {
+        if (term >= currentTerm) {
+            throw new AssertionError("leader invoke InstallSnapshot before AppendEntries");
+        }
+        return RaftResponse.failure(currentTerm);
+    }
 }

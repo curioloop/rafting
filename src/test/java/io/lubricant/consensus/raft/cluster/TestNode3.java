@@ -4,6 +4,7 @@ import io.lubricant.consensus.raft.RaftContainer;
 import io.lubricant.consensus.raft.cluster.cmd.AppendCommand;
 import io.lubricant.consensus.raft.cluster.cmd.FileBasedTestFactory;
 import io.lubricant.consensus.raft.command.RaftClient;
+import io.lubricant.consensus.raft.context.member.Leadership;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -27,7 +28,9 @@ public class TestNode3 {
                 if (ex instanceof ExecutionException) {
                     ex = ex.getCause();
                 }
-                logger.info("execute failed: {}", ex.getClass().getSimpleName());
+                if (! (ex instanceof Leadership.NotLeaderException)) {
+                    logger.info("execute failed: {}", ex.getClass().getSimpleName());
+                }
             }
             Thread.sleep(5000);
         }

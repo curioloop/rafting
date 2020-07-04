@@ -3,6 +3,7 @@ package io.lubricant.consensus.raft.context;
 import io.lubricant.consensus.raft.command.*;
 import io.lubricant.consensus.raft.support.EventLoopGroup;
 import io.lubricant.consensus.raft.support.RaftConfig;
+import io.lubricant.consensus.raft.support.SnapshotArchive;
 import io.lubricant.consensus.raft.support.StableLock;
 import io.lubricant.consensus.raft.command.spi.MachineProvider;
 import io.lubricant.consensus.raft.command.spi.StateLoader;
@@ -58,16 +59,21 @@ public class ContextManager implements AutoCloseable  {
 
         logger.info("Start creating RaftContext({})", contextId);
         StableLock lock = null;
+        SnapshotArchive snap = null;
         RaftLog raftLog = null;
         RaftMachine raftMachine = null;
         try {
             if (!Files.exists(config.lockerPath())) {
                 Files.createDirectories(config.lockerPath());
             }
+            if (!Files.exists(config.snapshotPath())) {
+                Files.createDirectories(config.snapshotPath());
+            }
             lock = new StableLock(config.lockerPath().resolve(contextId));
+            snap = new SnapshotArchive(config.snapshotPath(), contextId, 5);
             raftLog = stateLoader.restore(contextId, true);
             raftMachine = machineProvider.bootstrap(contextId, raftLog);
-            RaftContext raftContext = new RaftContext(contextId, lock, config, raftLog, raftMachine);
+            RaftContext raftContext = new RaftContext(contextId, lock, snap, config, raftLog, raftMachine);
             raftContext.initialize(cluster, routine, eventLoops.next());
             context = raftContext;
         } catch (Exception ex) {
@@ -100,7 +106,7 @@ public class ContextManager implements AutoCloseable  {
      * 获取上下文
      * @param contextId 上下文 ID
      */
-    public RaftContext getContext(String contextId) throws Exception {
+    public RaftContext getContext(String contextId, boolean create) throws Exception {
         RaftContext context = contextMap.get(contextId);
         if (context != null)
             return context;

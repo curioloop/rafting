@@ -38,4 +38,9 @@ public interface RaftParticipant {
      */
     RaftResponse requestVote(long term, ID candidateId, long lastLogIndex, long lastLogTerm) throws Exception;
 
+    /**
+     * @see RaftService#installSnapshot(long, ID, long, long)
+     */
+    RaftResponse installSnapshot(long term, ID leaderId, long lastIncludedIndex, long lastIncludedTerm) throws Exception;
+
 }

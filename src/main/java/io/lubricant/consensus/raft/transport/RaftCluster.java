@@ -1,6 +1,8 @@
 package io.lubricant.consensus.raft.transport;
 
 import io.lubricant.consensus.raft.RaftService;
+import io.lubricant.consensus.raft.support.PendingTask;
+import io.lubricant.consensus.raft.support.SnapshotArchive.Snapshot;
 
 import java.io.Serializable;
 import java.util.Set;
@@ -14,6 +16,13 @@ public interface RaftCluster extends AutoCloseable {
      * 节点 ID
      */
     interface ID extends Serializable {}
+
+    /**
+     * 快照服务
+     */
+    interface SnapService {
+        PendingTask<Snapshot> obtainSnapshot(long lastIncludedIndex, long lastIncludedTerm);
+    }
 
     /**
      * 集群大小
@@ -33,6 +42,6 @@ public interface RaftCluster extends AutoCloseable {
     /**
      * 远程节点（服务不可用时可返回空）
      */
-    RaftService remoteService(ID id, String ctxID);
+    <Service extends RaftService & SnapService> Service remoteService(ID id, String ctxID);
 
 }

@@ -19,7 +19,8 @@ public interface Leadership {
             requestFailure = AtomicLongFieldUpdater.newUpdater(State.class, "requestFailure");
 
     AtomicIntegerFieldUpdater<State>
-            requestInFlight = AtomicIntegerFieldUpdater.newUpdater(State.class, "requestInFlight");
+            requestInFlight = AtomicIntegerFieldUpdater.newUpdater(State.class, "requestInFlight"),
+            recentFailure = AtomicIntegerFieldUpdater.newUpdater(State.class, "recentFailure");
 
     /**
      * 其他节点的状态
@@ -30,12 +31,31 @@ public interface Leadership {
         volatile long requestSuccess; // 最近一次发送心跳成功的时间
         volatile long requestFailure; // 最近一次发送心跳失败的时间
         volatile int requestInFlight; // 在途请求数量
+        volatile int recentFailure;   // 最近连续请求失败次数
 
         volatile long nextIndex; // 下一条要发送的日志（初始为最后一条日志的 index）
         volatile long matchIndex; // 已经复制成功的最后一条日志（初始为 0）
+        volatile boolean pendingInstallation; // 等待数据同步完成
 
         boolean increaseMono(AtomicLongFieldUpdater<State> field, long current, long next) {
             return (next > current) && field.compareAndSet(this, current, next);
+        }
+
+        boolean isUnhealthy(int criticalPoint, long coolDown, long now) {
+            return criticalPoint > 0 &&Integer.compareUnsigned(recentFailure, criticalPoint) > 0 &&
+                   coolDown > 0 && now - requestFailure < coolDown;
+        }
+
+        void statSuccess(long now) {
+            increaseMono(Leadership.requestSuccess, this.requestSuccess, now);
+            if (requestFailure != 0) {
+                requestFailure = 0;
+            }
+        }
+
+        void statFailure(long now) {
+            increaseMono(Leadership.requestFailure, requestFailure, now);
+            Leadership.recentFailure.incrementAndGet(this);
         }
 
         synchronized void updateIndex(long index, boolean success) {
@@ -64,34 +84,6 @@ public interface Leadership {
             // 返回两个索引：[在所有节点都复制成功的日志索引，在大多数节点复制成功的日志索引]
             return new long[] {matchIndices[0], matchIndices[majorIndex]};
         }
-    }
-
-    /**
-     * 日志条目 Key
-     */
-    class EntryKey {
-
-        private final long index, term;
-
-        public EntryKey(Entry entry) {
-            this.index = entry.index();
-            this.term = entry.term();
-        }
-
-        @Override
-        public int hashCode() {
-            return Long.hashCode(index ^ term);
-        }
-
-        @Override
-        public boolean equals(Object obj) {
-            if (obj instanceof EntryKey) {
-                EntryKey key = (EntryKey) obj;
-                return index == key.index && term == key.term;
-            }
-            return false;
-        }
-
     }
 
     /**

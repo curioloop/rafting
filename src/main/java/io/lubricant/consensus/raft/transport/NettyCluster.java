@@ -1,11 +1,11 @@
 package io.lubricant.consensus.raft.transport;
 
 import io.lubricant.consensus.raft.RaftResponse;
-import io.lubricant.consensus.raft.RaftService;
 import io.lubricant.consensus.raft.context.ContextManager;
 import io.lubricant.consensus.raft.context.RaftContext;
 import io.lubricant.consensus.raft.support.RaftConfig;
 import io.lubricant.consensus.raft.support.RaftThreadGroup;
+import io.lubricant.consensus.raft.support.SnapshotArchive.Snapshot;
 import io.lubricant.consensus.raft.transport.event.*;
 import io.lubricant.consensus.raft.transport.rpc.AsyncService;
 import io.netty.channel.nio.NioEventLoopGroup;
@@ -17,6 +17,7 @@ import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
 
+@SuppressWarnings("unchecked")
 public class NettyCluster implements RaftCluster, EventBus.EventDispatcher {
 
     private final static Logger logger = LoggerFactory.getLogger(NettyCluster.class);
@@ -25,6 +26,7 @@ public class NettyCluster implements RaftCluster, EventBus.EventDispatcher {
     private EventBus eventBus;
     private Map<NodeID, NettyNode> remoteNodes;
     private NioEventLoopGroup eventLoops;
+    private NioEventLoopGroup snapEventLoop;
     private ContextManager contextManager;
 
     public NettyCluster(RaftConfig config) {
@@ -37,12 +39,12 @@ public class NettyCluster implements RaftCluster, EventBus.EventDispatcher {
 
         localID = local;
         eventBus = new EventBus(local.port(), this);
-        eventLoops = new NioEventLoopGroup(remote.size(),
-                RaftThreadGroup.instance().newFactory("EventNodeGroup-%d"));
+        eventLoops = new NioEventLoopGroup(remote.size(), RaftThreadGroup.instance().newFactory("EventNodeGroup-%d"));
+        snapEventLoop = new NioEventLoopGroup(1, RaftThreadGroup.instance().newFactory("SnapNodeGroup-%d"));
         remoteNodes = new HashMap<>();
         for (NodeID nodeID : remote) {
             remoteNodes.put(nodeID,
-                    new NettyNode(new EventNode(local, nodeID, eventLoops)));
+                    new NettyNode(new EventNode(local, nodeID, eventLoops, snapEventLoop)));
         }
         remoteNodes = Collections.unmodifiableMap(remoteNodes);
     }
@@ -64,7 +66,7 @@ public class NettyCluster implements RaftCluster, EventBus.EventDispatcher {
 
         try {
             String contextId = node.parseContextId(source.scope());
-            RaftContext context = contextManager.getContext(contextId);
+            RaftContext context = contextManager.getContext(contextId, true);
             Callable invocation = node.prepareLocalInvocation(source.scope(), event.message(), context);
             context.eventLoop().execute(() -> {
                 try {
@@ -94,8 +96,25 @@ public class NettyCluster implements RaftCluster, EventBus.EventDispatcher {
     }
 
     @Override
-    public void on(OneWayEvent event) {
-        throw new UnsupportedOperationException();
+    public TransSnapEvent on(WaitSnapEvent event) {
+        String contextName = event.context();
+        try {
+            RaftContext context = contextManager.getContext(contextName, false);
+            if (context == null) {
+                throw new Exception("context not found");
+            }
+            Snapshot snapshot = context.snapArchive().lastSnapshot();
+            if (snapshot == null) {
+                throw new Exception("no available snapshot");
+            }
+            if (snapshot.lastIncludeIndex() < event.index() ||
+                snapshot.lastIncludeTerm() < event.term()) {
+                throw new Exception("no eligible snapshot");
+            }
+            return new TransSnapEvent(snapshot.lastIncludeIndex(), snapshot.lastIncludeTerm(), snapshot.path());
+        } catch (Exception e) {
+            return new TransSnapEvent(event.index(), event.term(), e.getMessage());
+        }
     }
 
     @Override
@@ -114,7 +133,7 @@ public class NettyCluster implements RaftCluster, EventBus.EventDispatcher {
     }
 
     @Override
-    public RaftService remoteService(ID nodeID, String ctxID) {
+    public NettyNode.ServiceStub remoteService(ID nodeID, String ctxID) {
         NettyNode node = remoteNodes.get(nodeID);
         if (node == null) {
             throw new IllegalArgumentException("node not found " + nodeID);

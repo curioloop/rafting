@@ -6,6 +6,8 @@ import io.netty.channel.*;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
+import io.netty.util.Attribute;
+import io.netty.util.AttributeKey;
 import io.netty.util.concurrent.GenericFutureListener;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,8 +22,11 @@ public class EventBus extends Thread {
     public interface EventDispatcher {
         void on(PingEvent event);
         void on(PongEvent event);
-        void on(OneWayEvent event);
+        TransSnapEvent on(WaitSnapEvent event);
     }
+
+    private final AttributeKey<String> CHANNEL_NAME =
+            AttributeKey.newInstance("channelName");
 
     private final int port;
     private final EventDispatcher dispatcher;
@@ -37,33 +42,52 @@ public class EventBus extends Thread {
 
         @Override
         public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-            logger.error("Uncaught exception in handler", cause);
+            Attribute<String> name = ctx.channel().attr(CHANNEL_NAME);
+            logger.error("Uncaught exception in channel {}", name.get(), cause);
             ctx.close();
         }
 
         @Override
         public void channelInactive(ChannelHandlerContext ctx) throws Exception {
-            logger.info("Node channel closed");
+            Attribute<String> name = ctx.channel().attr(CHANNEL_NAME);
+            logger.info("Node channel {} closed", name.get());
         }
     }
 
-    private class ShakeHandHandler extends ChannelInboundHandlerAdapter {
+    private class FirstConnectHandler extends ChannelInboundHandlerAdapter {
         @Override
         public void channelRead(ChannelHandlerContext ctx, Object msg) {
+            Attribute<String> name = ctx.channel().attr(CHANNEL_NAME);
             if (msg instanceof ShakeHandEvent) {
                 try {
                     String message = ((ShakeHandEvent) msg).message();
                     NodeID nodeID = NodeID.fromString(message);
+                    name.set(message);
                     ctx.pipeline().replace(
                             EventCodec.STR_EVENT_DECODER,
                             EventCodec.BIN_EVENT_DECODER,
                             EventCodec.binEventDecoder(nodeID));
-                    ctx.pipeline().addLast(new EventDispatchHandler(nodeID));
+                    ctx.pipeline()
+                            .addLast(new EventDispatchHandler(nodeID));
                     ctx.writeAndFlush(ShakeHandEvent.ok());
                 } catch (Exception e) {
                     logger.error("Shake hand failed", e);
                     ctx.writeAndFlush(new ShakeHandEvent(e.getMessage()));
                     ctx.close();
+                }
+            } else if (msg instanceof WaitSnapEvent) {
+                WaitSnapEvent event = (WaitSnapEvent) msg;
+                TransSnapEvent snap = dispatcher.on(event);
+                name.set(event.context());
+                ctx.writeAndFlush(snap);
+                if (snap.length() == -1L) {
+                    ctx.close();
+                } else {
+                    DefaultFileRegion region = new DefaultFileRegion(snap.file().getChannel(), 0L, snap.length());
+                    ctx.writeAndFlush(region).addListener(future -> {
+                        ctx.close();
+                        snap.file().close();
+                    });
                 }
             } else {
                 ctx.fireChannelRead(msg);
@@ -85,9 +109,7 @@ public class EventBus extends Thread {
             if (msg instanceof Event.BinEvent) {
                 EventID src = ((Event.BinEvent) msg).source();
                 if (src.nodeID().equals(nodeID)) {
-                    if (msg instanceof OneWayEvent) {
-                        dispatcher.on((OneWayEvent) msg);
-                    } else if (msg instanceof PingEvent) {
+                    if (msg instanceof PingEvent) {
                         dispatcher.on((PingEvent) msg);
                     } else if (msg instanceof PongEvent) {
                         dispatcher.on((PongEvent) msg);
@@ -120,7 +142,7 @@ public class EventBus extends Thread {
                                     .addLast(EventCodec.STR_EVENT_DECODER, EventCodec.strEventDecoder())
                                     .addLast(EventCodec.frameEncoder())
                                     .addLast(EventCodec.eventEncoder())
-                                    .addLast(new ShakeHandHandler())
+                                    .addLast(new FirstConnectHandler())
                                     .addLast(new DisconnectedHandler());
                         }
                     })

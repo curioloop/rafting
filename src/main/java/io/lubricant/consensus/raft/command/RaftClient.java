@@ -60,10 +60,8 @@ public class RaftClient implements AutoCloseable {
      */
     public <R> Future<R> submit(Command<R> cmd) {
         Promise<R> promise = new Promise<>();
-        FutureTask<R> future = new FutureTask<>(promise);
-        promise.future(future);
         context.eventLoop().execute(() -> process(cmd, promise, context));
-        return future;
+        return promise;
     }
 
     /**
@@ -74,7 +72,7 @@ public class RaftClient implements AutoCloseable {
         if (participant instanceof Leader) {
             ((Leader) participant).acceptCommand(cmd, promise);
         } else {
-            promise.error(new NotLeaderException(participant));
+            promise.completeExceptionally(new NotLeaderException(participant));
         }
     }
 
