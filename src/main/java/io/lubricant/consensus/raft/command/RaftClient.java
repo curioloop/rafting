@@ -3,7 +3,7 @@ package io.lubricant.consensus.raft.command;
 import io.lubricant.consensus.raft.RaftParticipant;
 import io.lubricant.consensus.raft.context.RaftContext;
 import io.lubricant.consensus.raft.context.member.Leader;
-import io.lubricant.consensus.raft.context.member.Leadership.NotLeaderException;
+import io.lubricant.consensus.raft.context.member.Leadership.*;
 import io.lubricant.consensus.raft.support.Promise;
 
 import java.io.Serializable;
@@ -70,7 +70,12 @@ public class RaftClient implements AutoCloseable {
     private void process(Command cmd, Promise promise, RaftContext ctx) {
         RaftParticipant participant = ctx.participant();
         if (participant instanceof Leader) {
-            ((Leader) participant).acceptCommand(cmd, promise);
+            Leader leader = (Leader) participant;
+            if (leader.isReady()) {
+                leader.acceptCommand(cmd, promise);
+            } else {
+                promise.completeExceptionally(new NotReadyException());
+            }
         } else {
             promise.completeExceptionally(new NotLeaderException(participant));
         }

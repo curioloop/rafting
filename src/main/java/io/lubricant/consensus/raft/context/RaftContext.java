@@ -48,7 +48,7 @@ public class RaftContext {
     final AtomicReference<Membership> membershipFilter = new AtomicReference<>(); // 支持抢占切换
     final AtomicInteger commitVersion = new AtomicInteger(); //
 
-    final MaintainAgreement maintainAgreement = new MaintainAgreement();
+    final MaintainAgreement maintainAgreement;
     PendingTask<Void> snapshotInstallation;
 
     public RaftContext(String id, StableLock lock, SnapshotArchive snap, RaftConfig config, RaftLog log, RaftMachine machine) throws Exception {
@@ -58,6 +58,7 @@ public class RaftContext {
         this.stateMachine = machine;
         this.stableStorage = lock;
         this.snapArchive = snap;
+        maintainAgreement = new MaintainAgreement(config);
         maintainAgreement.minimalLogIndex(replicatedLog.epoch().index());
     }
 

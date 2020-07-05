@@ -7,7 +7,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
 
 /**
- * 异步任务（）
+ * 异步任务
  */
 @SuppressWarnings("all")
 public abstract class PendingTask<T> extends FutureTask<T> {

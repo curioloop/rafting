@@ -273,7 +273,7 @@ public class RaftRoutine implements AutoCloseable {
                 context.maintainAgreement.increaseCommand();
             }
         } catch (Exception e) {
-            logger.error("Apply command failed {}", context.ctxID(), e);
+            logger.error("RaftContext({}) apply command failed", context.ctxID(), e);
             return false;
         } finally {
             maintainSnap(context);
@@ -287,6 +287,7 @@ public class RaftRoutine implements AutoCloseable {
         RaftMachine machine = context.stateMachine();
         if (agreement.needMaintain(machine.lastApplied())) {
             agreement.triggerMaintenance();
+            logger.info("RaftContext({}) maintain triggered", context.ctxID());
             try {
                 Future<Checkpoint> future = machine.checkpoint(agreement.minimalLogIndex());
                 logMaintainer.execute(() -> {
@@ -311,7 +312,7 @@ public class RaftRoutine implements AutoCloseable {
                         }
                         maintainSuccess= true;
                     } catch (Exception e) {
-                        logger.error("Record checkpoint failed {}", context.ctxID(), e);
+                        logger.error("RaftContext({}) record checkpoint failed", context.ctxID(), e);
                     }
 
                     if (! updateLastInclude) {
@@ -321,13 +322,14 @@ public class RaftRoutine implements AutoCloseable {
                                 agreement.snapshotIncludeEntry(snapshot.lastIncludeIndex(), snapshot.lastIncludeTerm());
                             }
                         } catch (Exception e) {
-                            logger.error("Update lastIncludedEntry failed {}", context.ctxID(), e);
+                            logger.error("RaftContext({}) update lastIncludedEntry failed", context.ctxID(), e);
                         }
                     }
                     agreement.finishMaintenance(maintainSuccess);
+                    logger.info("RaftContext({}) maintain finished: {}", context.ctxID(), maintainSuccess);
                 });
             } catch (Exception e) {
-                logger.error("Record checkpoint failed {}", context.ctxID(), e);
+                logger.error("RaftContext({}) record checkpoint failed", context.ctxID(), e);
                 agreement.finishMaintenance(false);
             }
         }
@@ -341,6 +343,7 @@ public class RaftRoutine implements AutoCloseable {
         MaintainAgreement agreement = context.maintainAgreement;
         if (agreement.needCompact()) {
             agreement.triggerCompaction();
+            logger.info("RaftContext({}) compact triggered", context.ctxID());
             try {
                 Entry snap = agreement.snapshotIncludeEntry();
                 RaftLog log = context.replicatedLog();
@@ -360,13 +363,14 @@ public class RaftRoutine implements AutoCloseable {
                                 compactSuccess = true;
                             }
                         } catch (Exception e) {
-                            logger.error("Compact log failed {}", context.ctxID(), e);
+                            logger.error("RaftContext({}) compact log failed", context.ctxID(), e);
                         }
                         agreement.finishCompaction(compactSuccess);
+                        logger.info("RaftContext({}) compact finished: {}", context.ctxID(), compactSuccess);
                     });
                 }
             } catch (Exception e) {
-                logger.error("Compact log failed {}", context.ctxID(), e);
+                logger.error("RaftContext({}) compact log failed", context.ctxID(), e);
                 agreement.finishCompaction(false);
             }
         }
@@ -442,7 +446,7 @@ public class RaftRoutine implements AutoCloseable {
                         machine.recover(snapshot);
                         set(null);
                     } catch (Exception e) {
-                        logger.error("Restore checkpoint failed {}", context.ctxID(), e);
+                        logger.error("RaftContext({}) restore from snapshot failed", context.ctxID(), e);
                         setException(e);
                     }
                 }

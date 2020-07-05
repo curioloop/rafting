@@ -46,6 +46,10 @@ public interface Leadership {
                    coolDown > 0 && now - requestFailure < coolDown;
         }
 
+        boolean isReady(int criticalPoint, long coolDown, long now) {
+            return requestSuccess != 0 && ! isUnhealthy(criticalPoint, coolDown, now);
+        }
+
         void statSuccess(long now) {
             increaseMono(Leadership.requestSuccess, this.requestSuccess, now);
             if (requestFailure != 0) {

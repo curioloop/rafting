@@ -133,11 +133,13 @@ public class NettyNode extends AsyncService {
         throw new IllegalArgumentException("unknown context " + scope);
     }
 
-    public void replyRequest(Event event) {
+    public boolean replyRequest(Event event) {
         Channel channel = node.channel();
-        if (channel != null) {
+        if (channel != null && channel.isWritable()) {
             channel.writeAndFlush(event);
+            return true;
         }
+        return false;
     }
 
     public void connect() {

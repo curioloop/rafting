@@ -31,13 +31,31 @@ public class Leader extends RaftMember implements Leadership {
         Entry last = ctx.replicatedLog().last();
         long lastIndex = last == null ? ctx.replicatedLog().epoch().index(): last.index();
         Set<ID> followers = ctx.cluster().remoteIDs();
-        Map<ID, State> map = new ConcurrentHashMap<>(followers.size());
+        Map<ID, State> map = new HashMap<>(followers.size());
         for (ID follower : followers) {
             State state = new State();
             state.nextIndex = lastIndex + 1;
             map.put(follower, state);
         }
-        followerStatus = Collections.unmodifiableMap(map);
+        final List<State> states = Arrays.asList(map.values().toArray(new State[0]));
+        followerStatus = Collections.unmodifiableMap(new ConcurrentHashMap<ID, State>(map) {
+            @Override
+            public Collection<State> values() {
+                return states;
+            }
+        });
+    }
+
+    public boolean isReady() {
+        long now = System.currentTimeMillis();
+        int ready = 0, half = followerStatus.size() / 2;
+        for (State state : followerStatus.values()) {
+            if (state.isReady(
+                    ctx.envConfig().availableCriticalPoint(),
+                    ctx.envConfig().recoveryCoolDown(), now) && ++ready > half)
+                return true;
+        }
+        return false;
     }
 
     @Override

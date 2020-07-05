@@ -43,6 +43,9 @@ public class EventNode {
                     .handler(new ChannelInitializer<SocketChannel>() {
                         @Override
                         public void initChannel(SocketChannel ch) throws Exception {
+                            ch.config()
+                                    .setTcpNoDelay(true)
+                                    .setWriteBufferWaterMark(new WriteBufferWaterMark(2 * 1024 * 1024, 5 * 1024 * 1024));
                             ch.pipeline()
                                     .addLast(EventCodec.frameDecoder())
                                     .addLast(EventCodec.strEventDecoder())
@@ -142,6 +145,8 @@ public class EventNode {
                     .handler(new ChannelInitializer<SocketChannel>() {
                         @Override
                         public void initChannel(SocketChannel ch) throws Exception {
+                            ch.config()
+                                    .setWriteBufferWaterMark(new WriteBufferWaterMark(5 * 1024 * 1024, 5 * 1024 * 1024));
                             ch.pipeline()
                                     .addLast(EventCodec.frameDecoder())
                                     .addLast(EventCodec.strEventDecoder())

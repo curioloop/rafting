@@ -234,7 +234,7 @@ public class RocksLog implements RaftLog, Closeable {
         db.flushWal(true);
         epochEntry = newEpoch;
         lastEntry = lastEntry();
-        return CompletableFuture.completedFuture(true);
+        return CompletableFuture.completedFuture(Boolean.TRUE);
     }
 
     private Entry lastEntry() {

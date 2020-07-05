@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -33,6 +34,8 @@ public class RaftConfig {
     private final String statePath;
     private final String lockerPath;
     private final String snapshotPath;
+    private final int triggerInterval, maintainInterval, compactInterval, stateChangeThreshold, dirtyLogTolerance;
+    private final int availableCriticalPoint, recoveryCoolDown;
 
     public RaftConfig(String configPath, boolean classpath) throws Exception {
 
@@ -68,12 +71,11 @@ public class RaftConfig {
                 remote.add(remoteNodes.item(i).getTextContent());
             }
 
-            Number tickNum = (Number) xPath.evaluate("count(timeout/tick)", config, XPathConstants.NUMBER);
-            Number heartbeatNum = (Number) xPath.evaluate("count(timeout/heartbeat)", config, XPathConstants.NUMBER);
-            Number electionNum = (Number) xPath.evaluate("count(timeout/election)", config, XPathConstants.NUMBER);
-            Number broadcastNum = (Number) xPath.evaluate("count(timeout/broadcast)", config, XPathConstants.NUMBER);
-            if (tickNum.intValue() != 1 || heartbeatNum.intValue() != 1 || electionNum.intValue() != 1 || broadcastNum.intValue() != 1) {
-                throw new IllegalArgumentException("schedule");
+            if (((Number) xPath.evaluate("count(timeout/tick)", config, XPathConstants.NUMBER)).intValue() != 1 ||
+                ((Number) xPath.evaluate("count(timeout/heartbeat)", config, XPathConstants.NUMBER)).intValue() != 1||
+                ((Number) xPath.evaluate("count(timeout/election)", config, XPathConstants.NUMBER)).intValue() != 1||
+                ((Number) xPath.evaluate("count(timeout/broadcast)", config, XPathConstants.NUMBER)).intValue() != 1) {
+                throw new IllegalArgumentException("timeout");
             }
 
             int tick = ((Number)xPath.evaluate("timeout/tick", config, XPathConstants.NUMBER)).intValue();
@@ -81,10 +83,27 @@ public class RaftConfig {
             double election = ((Number)xPath.evaluate("timeout/election", config, XPathConstants.NUMBER)).doubleValue();
             double broadcast = ((Number)xPath.evaluate("timeout/broadcast", config, XPathConstants.NUMBER)).doubleValue();
             if (tick <= 0 || heartbeat <= 0 || election <= 0 || broadcast <= 0) {
-                throw new IllegalArgumentException("schedule");
+                throw new IllegalArgumentException("timeout");
             }
             if (heartbeat >= election || broadcast >= heartbeat) {
-                throw new IllegalArgumentException("schedule");
+                throw new IllegalArgumentException("timeout");
+            }
+
+            if (((Number) xPath.evaluate("count(snapshot/trigger-interval)", config, XPathConstants.NUMBER)).intValue() != 1 ||
+                ((Number) xPath.evaluate("count(snapshot/maintain-interval)", config, XPathConstants.NUMBER)).intValue() != 1 ||
+                ((Number) xPath.evaluate("count(snapshot/compact-interval)", config, XPathConstants.NUMBER)).intValue() != 1||
+                ((Number) xPath.evaluate("count(snapshot/state-change-threshold)", config, XPathConstants.NUMBER)).intValue() != 1||
+                ((Number) xPath.evaluate("count(snapshot/dirty-log-tolerance)", config, XPathConstants.NUMBER)).intValue() != 1) {
+                throw new IllegalArgumentException("snapshot");
+            }
+
+            int triggerInterval = ((Number)xPath.evaluate("snapshot/trigger-interval", config, XPathConstants.NUMBER)).intValue();
+            int maintainInterval = ((Number)xPath.evaluate("snapshot/maintain-interval", config, XPathConstants.NUMBER)).intValue();
+            int compactInterval = ((Number)xPath.evaluate("snapshot/compact-interval", config, XPathConstants.NUMBER)).intValue();
+            int stateChangeThreshold = ((Number)xPath.evaluate("snapshot/state-change-threshold", config, XPathConstants.NUMBER)).intValue();
+            int dirtyLogTolerance = ((Number)xPath.evaluate("snapshot/dirty-log-tolerance", config, XPathConstants.NUMBER)).intValue();
+            if (maintainInterval <= 0 || compactInterval <= 0 || stateChangeThreshold <= 0 || dirtyLogTolerance <= 0) {
+                throw new IllegalArgumentException("snapshot");
             }
 
             String logDir = (String) xPath.evaluate("storage/log", config, XPathConstants.STRING);
@@ -116,6 +135,15 @@ public class RaftConfig {
             this.election = election;
             this.broadcast = broadcast;
 
+            this.triggerInterval = triggerInterval;
+            this.maintainInterval = maintainInterval;
+            this.compactInterval = compactInterval;
+            this.stateChangeThreshold = stateChangeThreshold;
+            this.dirtyLogTolerance = dirtyLogTolerance;
+
+            this.availableCriticalPoint = 1;
+            this.recoveryCoolDown = 100;
+
             this.logPath = logDir + (logDir.endsWith(File.separator) ? "": File.separator);
             this.statePath = stateDir + (stateDir.endsWith(File.separator) ? "": File.separator);
             this.lockerPath = lockerDir + (lockerDir.endsWith(File.separator) ? "": File.separator);
@@ -146,5 +174,33 @@ public class RaftConfig {
 
     public int broadcastTimeout() {
         return (int) Math.round(broadcast * tick);
+    }
+
+    public long snapTriggerInterval() {
+        return TimeUnit.SECONDS.toMillis(triggerInterval);
+    }
+
+    public long snapMaintainInterval() {
+        return TimeUnit.SECONDS.toMillis(maintainInterval);
+    }
+
+    public long snapCompactInterval() {
+        return TimeUnit.SECONDS.toMillis(compactInterval);
+    }
+
+    public int snapStateChangeThreshold() {
+        return stateChangeThreshold;
+    }
+
+    public int snapDirtyLogTolerance() {
+        return dirtyLogTolerance;
+    }
+
+    public int availableCriticalPoint() {
+        return availableCriticalPoint;
+    }
+
+    public int recoveryCoolDown() {
+        return recoveryCoolDown;
     }
 }

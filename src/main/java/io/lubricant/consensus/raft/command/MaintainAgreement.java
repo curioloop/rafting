@@ -2,6 +2,7 @@ package io.lubricant.consensus.raft.command;
 
 import io.lubricant.consensus.raft.command.RaftLog.Entry;
 import io.lubricant.consensus.raft.command.RaftLog.EntryKey;
+import io.lubricant.consensus.raft.support.RaftConfig;
 
 import java.util.concurrent.TimeUnit;
 
@@ -10,6 +11,7 @@ import java.util.concurrent.TimeUnit;
  */
 public class MaintainAgreement {
 
+    private static final long MIN_TRIGGER_INTERVAL = TimeUnit.SECONDS.toMillis(5);
     private static final long MIN_MAINTAIN_INTERVAL = TimeUnit.MINUTES.toMillis(1);
 
     private long recentCommandCount;                // 状态机执行命令的数量（同线程访问）
@@ -21,19 +23,24 @@ public class MaintainAgreement {
     private volatile boolean compactInProgress;     // 整理任务进行中（已提交到线程池）
     private volatile long lastMaintainSuccessTime;  // 最近一次维护成功的时间
     private volatile long lastMaintainTriggerTime;  // 最近一次触发维护的时间
+    private volatile long lastCompactSuccessTime;   // 最近一次整理成功的时间
     private volatile long lastCompactTriggerTime;   // 最近一次触发整理的时间
 
-    private final long expectMaintainInterval; // 触发维护操作的间隔
-    private final long expectCompactInterval;  // 触发整理操作的间隔
+    private final long expectTriggerInterval;  // 操作触发的间隔
+    private final long expectMaintainInterval; // 维护状态机的间隔
+    private final long expectCompactInterval;  // 整理日志的间隔
     private final long stateChangeThreshold;   // 当状态机执行的命令数量超过该值，触发清理
     private final long dirtyLogTolerance;      // 当已经提交的日志数量超过该值，触发清理
 
-    public MaintainAgreement() {
-        this(TimeUnit.MINUTES.toMillis(5), TimeUnit.MINUTES.toMillis(5),1000, 5000);
+    public MaintainAgreement(RaftConfig config) {
+        this(Math.max(config.snapTriggerInterval(), MIN_TRIGGER_INTERVAL),
+             Math.max(config.snapMaintainInterval(), MIN_MAINTAIN_INTERVAL),
+             config.snapCompactInterval(), config.snapStateChangeThreshold(), config.snapDirtyLogTolerance());
     }
 
-    public MaintainAgreement(long expectMaintainInterval, long expectCompactInterval, long stateChangeThreshold, long dirtyLogTolerance) {
-        this.expectMaintainInterval = Math.max(expectMaintainInterval, MIN_MAINTAIN_INTERVAL);
+    public MaintainAgreement(long expectTriggerInterval, long expectMaintainInterval, long expectCompactInterval, int stateChangeThreshold, int dirtyLogTolerance) {
+        this.expectTriggerInterval = expectTriggerInterval;
+        this.expectMaintainInterval = expectMaintainInterval;
         this.expectCompactInterval = Math.max(expectCompactInterval, expectMaintainInterval);
         this.stateChangeThreshold = stateChangeThreshold;
         this.dirtyLogTolerance = dirtyLogTolerance;
@@ -59,9 +66,11 @@ public class MaintainAgreement {
 
     public void snapshotIncludeEntry(long index, long term) {
         if (lastSnapIncludeEntry != null) {
-            if (lastSnapIncludeEntry.index() > index) {
+            if (lastSnapIncludeEntry.index() > index ||
+                lastSnapIncludeEntry.term() > term) {
                 throw new AssertionError(String.format(
-                        "snapshot index decrease %d < %d", index, lastSnapIncludeEntry.index()));
+                        "snapshot index decrease (%d:%d) < (%d:%d)", index, term,
+                        lastSnapIncludeEntry.index(), lastSnapIncludeEntry.term()));
             } else if (lastSnapIncludeEntry.index() == index) {
                 return;
             }
@@ -78,19 +87,19 @@ public class MaintainAgreement {
             return false;
         }
         long currentMills = System.currentTimeMillis();
-        if (currentMills - lastMaintainTriggerTime < MIN_MAINTAIN_INTERVAL) {
+        if (currentMills - lastMaintainTriggerTime < expectTriggerInterval) {
             return false;
         }
         if (currentMills - lastMaintainSuccessTime < expectMaintainInterval) {
             return false;
         }
-        if (lastAppliedIndex - minimalLogIndex < dirtyLogTolerance) {
+        if (minimalLogIndex - lastAppliedIndex < dirtyLogTolerance) {
             return false;
         }
         if (recentCommandCount < stateChangeThreshold) {
             return false;
         }
-        return false;
+        return true;
     }
 
     public void triggerMaintenance() {
@@ -107,8 +116,17 @@ public class MaintainAgreement {
     }
 
     public boolean needCompact() {
-        return ! compactInProgress && snapshotIncludeEntry != null &&
-        System.currentTimeMillis() - lastCompactTriggerTime > expectCompactInterval;
+        if (compactInProgress || snapshotIncludeEntry == null) {
+            return false;
+        }
+        long currentMills = System.currentTimeMillis();
+        if (currentMills - lastCompactTriggerTime < expectTriggerInterval) {
+            return false;
+        }
+        if (currentMills - lastCompactSuccessTime < expectCompactInterval) {
+            return false;
+        }
+        return true;
     }
 
     public void triggerCompaction() {
@@ -117,6 +135,7 @@ public class MaintainAgreement {
 
     public void finishCompaction(boolean success) {
         if (success) {
+            lastCompactSuccessTime = System.currentTimeMillis();
             lastSnapIncludeEntry = snapshotIncludeEntry;
             snapshotIncludeEntry = null;
         }

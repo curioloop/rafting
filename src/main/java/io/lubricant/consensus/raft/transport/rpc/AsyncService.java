@@ -98,7 +98,7 @@ public class AsyncService {
         final Invocation<V> invocation = new Invocation<>(invokeID);
         return Async.call( ignored -> {
             Channel channel = node.channel();
-            if (channel != null) {
+            if (channel != null && channel.isWritable()) {
                 invocations.put(invokeID, invocation);
                 try {
                     channel.writeAndFlush(new PingEvent(eventID, params, invokeID.sequence));
@@ -108,6 +108,8 @@ public class AsyncService {
                         i.completeExceptionally(e);
                     }
                 }
+            } else {
+                invocation.cancel(true);
             }
         }, invocation, decorateInvocation(invocation));
     }
