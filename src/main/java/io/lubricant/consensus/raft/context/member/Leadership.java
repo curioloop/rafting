@@ -42,18 +42,18 @@ public interface Leadership {
         }
 
         boolean isUnhealthy(int criticalPoint, long coolDown, long now) {
-            return criticalPoint > 0 &&Integer.compareUnsigned(recentFailure, criticalPoint) > 0 &&
+            return criticalPoint > 0 && Integer.compareUnsigned(recentFailure, criticalPoint) > 0 ||
                    coolDown > 0 && now - requestFailure < coolDown;
         }
 
         boolean isReady(int criticalPoint, long coolDown, long now) {
-            return requestSuccess != 0 && ! isUnhealthy(criticalPoint, coolDown, now);
+            return requestSuccess != 0 && ! (pendingInstallation || isUnhealthy(criticalPoint, coolDown, now));
         }
 
         void statSuccess(long now) {
-            increaseMono(Leadership.requestSuccess, this.requestSuccess, now);
-            if (requestFailure != 0) {
-                requestFailure = 0;
+            increaseMono(Leadership.requestSuccess, requestSuccess, now);
+            if (recentFailure != 0) {
+                recentFailure = 0;
             }
         }
 
@@ -62,14 +62,15 @@ public interface Leadership {
             Leadership.recentFailure.incrementAndGet(this);
         }
 
-        synchronized void updateIndex(long index, boolean success) {
+        synchronized void updateIndex(long index, long epoch, boolean success) {
             if (success) {
                 if (index > matchIndex) {
                     nextIndex = index + 1;
                     matchIndex = index;
                 }
             } else if (matchIndex == 0) {
-                nextIndex--;
+                long next = Math.max(nextIndex - REPLICATE_LIMIT, epoch + 1);
+                nextIndex = Math.min(nextIndex - 1, next);
             }
         }
 

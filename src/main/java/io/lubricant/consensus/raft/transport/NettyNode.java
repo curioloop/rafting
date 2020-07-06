@@ -55,7 +55,7 @@ public class NettyNode extends AsyncService {
         @Override
         public Async<RaftResponse> requestVote(long term, ID candidateId, long lastLogIndex, long lastLogTerm) throws Exception {
             String scope = REQUEST_VOTE.getName() + ':' + contextId;
-            return invoke(scope, new Object[]{term, candidateId, lastLogIndex, lastLogIndex});
+            return invoke(scope, new Object[]{term, candidateId, lastLogIndex, lastLogTerm});
         }
         @Override
         public Async<RaftResponse> installSnapshot(long term, ID leaderId, long lastIncludedIndex, long lastIncludedTerm) throws Exception {

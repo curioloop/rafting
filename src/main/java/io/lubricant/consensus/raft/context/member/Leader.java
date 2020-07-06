@@ -48,7 +48,7 @@ public class Leader extends RaftMember implements Leadership {
 
     public boolean isReady() {
         long now = System.currentTimeMillis();
-        int ready = 0, half = followerStatus.size() / 2;
+        int ready = 1, half = followerStatus.size() / 2;
         for (State state : followerStatus.values()) {
             if (state.isReady(
                     ctx.envConfig().availableCriticalPoint(),
@@ -200,12 +200,13 @@ public class Leader extends RaftMember implements Leadership {
                     response.on(head, timeout, (result, error, canceled) -> {
                         logger.debug("Response[{}]({}/{}) {} {} {}", id, nextIndex, lastIndex, result, error, canceled);
                         requestInFlight.decrementAndGet(state);
+                        final long current = System.currentTimeMillis();
                         if (! canceled && error == null && result != null) {
                             if (result.term() > currentTerm) {
                                 head.abortRequests();
                                 ctx.trySwitchTo(Follower.class, result.term(), id);
                             } else {
-                                state.updateIndex(lastIndex, result.success());
+                                state.updateIndex(lastIndex, epoch.index(), result.success());
                                 if (result.success()) {
                                     tryCommit();
                                 } else {
@@ -213,10 +214,10 @@ public class Leader extends RaftMember implements Leadership {
                                         state.pendingInstallation = true;
                                     }
                                 }
-                                state.statSuccess(now);
+                                state.statSuccess(current);
                             }
                         } else if (error != null) {
-                            state.statFailure(now);
+                            state.statFailure(current);
                         }
                     });
                 } catch (Exception e) {

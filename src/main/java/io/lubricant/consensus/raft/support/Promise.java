@@ -21,15 +21,15 @@ public class Promise<V> extends CompletableFuture<V> {
 
     @Override
     public boolean complete(V result) {
-        return super.complete(result) && triggerTimeout();
+        return super.complete(result) && cancelTimeout();
     }
 
     @Override
     public boolean completeExceptionally(Throwable ex) {
-        return super.completeExceptionally(ex) && triggerTimeout();
+        return super.completeExceptionally(ex) && cancelTimeout();
     }
 
-    private boolean triggerTimeout() {
+    private boolean cancelTimeout() {
         ScheduledFuture timeout = this.timeout;
         if (timeout != null) {
             timeout.cancel(false);

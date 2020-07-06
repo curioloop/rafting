@@ -109,6 +109,9 @@ public class Candidate extends RaftMember {
             RaftService raftService = ctx.cluster().remoteService(id, ctx.ctxID());
             if (raftService != null) {
                 try {
+
+                    logger.debug("RequestVote[{}] {} {} {} {}", id, currentTerm, ctx.nodeID(), lastLogIndex, lastLogTerm);
+
                     Async<RaftResponse> response = raftService.requestVote(currentTerm, ctx.nodeID(), lastLogIndex, lastLogTerm);
                     response.on(head, timeout, (result, error, canceled) -> {
                         if (canceled) return;

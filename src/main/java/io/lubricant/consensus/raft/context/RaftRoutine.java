@@ -229,7 +229,8 @@ public class RaftRoutine implements AutoCloseable {
         int t = maxRounds - 1;
         int v = version.get();
         while (v > 0) {
-            if (applyCommand(context, promises, v)) {
+            logger.debug("RaftContext({}) committing commands {}", context.ctxID(), v);
+            if (applyCommand(context, promises, Math.max(1000, v))) {
                 if ((v = version.addAndGet(-v)) > 0) { // check whether to proceed to the next round
                     if (--t < 0) { // yield the thread in fairness
                         commandExecutor.execute(() -> applyEntry(context, promises, maxRounds));
@@ -243,13 +244,13 @@ public class RaftRoutine implements AutoCloseable {
         }
     }
 
-    private boolean applyCommand(RaftContext context, Function<Entry, Promise> promises, int count){
+    private boolean applyCommand(RaftContext context, Function<Entry, Promise> promises, int limit){
         try {
             RaftLog log = context.replicatedLog();
             RaftMachine machine = context.stateMachine();
             final long commitIndex = log.lastCommitted();
             long prevApplied = machine.lastApplied();
-            while (prevApplied < commitIndex && count-- > 0) {
+            while (prevApplied < commitIndex && limit-- > 0) {
                 long nextIndex = machine.lastApplied() + 1;
                 Entry entry = log.get(nextIndex);
                 if (entry == null) {
@@ -287,7 +288,7 @@ public class RaftRoutine implements AutoCloseable {
         RaftMachine machine = context.stateMachine();
         if (agreement.needMaintain(machine.lastApplied())) {
             agreement.triggerMaintenance();
-            logger.info("RaftContext({}) maintain triggered", context.ctxID());
+            logger.info("RaftContext({}) maintain snap triggered", context.ctxID());
             try {
                 Future<Checkpoint> future = machine.checkpoint(agreement.minimalLogIndex());
                 logMaintainer.execute(() -> {
@@ -326,7 +327,7 @@ public class RaftRoutine implements AutoCloseable {
                         }
                     }
                     agreement.finishMaintenance(maintainSuccess);
-                    logger.info("RaftContext({}) maintain finished: {}", context.ctxID(), maintainSuccess);
+                    logger.info("RaftContext({}) maintain snap finished: {}", context.ctxID(), maintainSuccess);
                 });
             } catch (Exception e) {
                 logger.error("RaftContext({}) record checkpoint failed", context.ctxID(), e);
@@ -343,7 +344,7 @@ public class RaftRoutine implements AutoCloseable {
         MaintainAgreement agreement = context.maintainAgreement;
         if (agreement.needCompact()) {
             agreement.triggerCompaction();
-            logger.info("RaftContext({}) compact triggered", context.ctxID());
+            logger.info("RaftContext({}) compact log triggered", context.ctxID());
             try {
                 Entry snap = agreement.snapshotIncludeEntry();
                 RaftLog log = context.replicatedLog();
@@ -366,7 +367,7 @@ public class RaftRoutine implements AutoCloseable {
                             logger.error("RaftContext({}) compact log failed", context.ctxID(), e);
                         }
                         agreement.finishCompaction(compactSuccess);
-                        logger.info("RaftContext({}) compact finished: {}", context.ctxID(), compactSuccess);
+                        logger.info("RaftContext({}) compact log finished: {}", context.ctxID(), compactSuccess);
                     });
                 }
             } catch (Exception e) {

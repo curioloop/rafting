@@ -54,23 +54,23 @@ public class Follower extends RaftMember {
 
             logger.debug("Request[{}]({}) {} {} {} {}", leaderId, term, prevLogIndex, prevLogTerm, leaderCommit, entries);
 
+            RaftLog log = ctx.replicatedLog();
             // leader may send heartbeat without log entries
             if (entries != null && entries.length > 0) {
-                RaftLog log = ctx.replicatedLog();
-
                 Entry conflict = log.conflict(entries);
                 if (conflict != null) {
                     log.truncate(conflict.index());
                 }
                 log.append(entries); // sync to disk
+            }
 
+            if (leaderCommit > log.epoch().index()) {
                 Entry last = log.last();
-                if (leaderCommit != 0 && last != null) {
+                if (last != null) {
                     // truncate commit index when it exceed the last index
                     ctx.commitLog(Math.min(leaderCommit, last.index()), true);
                 }
             }
-
         } finally {
             ctx.resetTimer(this, false);
         }
@@ -99,9 +99,15 @@ public class Follower extends RaftMember {
 
     @Override
     public RaftResponse installSnapshot(long term, ID leaderId, long lastIncludedIndex, long lastIncludedTerm) throws Exception {
-        if (term >= currentTerm) {
+
+        assertEventLoop();
+
+        if (term < currentTerm) {
+            return RaftResponse.failure(currentTerm);
+        } else if (term > currentTerm) {
             throw new AssertionError("leader invoke InstallSnapshot before AppendEntries");
         }
+
         ctx.resetTimer(this, true);
         try {
             boolean success = ctx.installSnapshot(leaderId, lastIncludedIndex, lastIncludedTerm);
