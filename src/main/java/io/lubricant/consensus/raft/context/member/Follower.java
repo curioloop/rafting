@@ -34,6 +34,8 @@ public class Follower extends RaftMember {
             return RaftResponse.failure(currentTerm);
         }
 
+        ctx.resetTimer(this, true);
+
         if (term > currentTerm) {
             ctx.switchTo(Follower.class, term, lastCandidate);
             return ctx.participant().appendEntries(term, leaderId, prevLogIndex, prevLogTerm, entries, leaderCommit);
@@ -41,8 +43,9 @@ public class Follower extends RaftMember {
             throw new AssertionError("only one leader could be elected in one term");
         }
 
+        ctx.joinSnapshot(); // ensure consistent between log epoch and machine status
+
         currentLeader = leaderId;
-        ctx.resetTimer(this, true);
         try {
 
             if (! logContains(prevLogIndex, prevLogTerm)) {
@@ -52,7 +55,7 @@ public class Follower extends RaftMember {
             // skip entries before log epoch
             entries = purgeEntries(entries);
 
-            logger.debug("Request[{}]({}) {} {} {} {}", leaderId, term, prevLogIndex, prevLogTerm, leaderCommit, entries);
+            logger.debug("AE-Request[{}]({}) {} {} {} {}", leaderId, term, prevLogIndex, prevLogTerm, leaderCommit, entries);
 
             RaftLog log = ctx.replicatedLog();
             // leader may send heartbeat without log entries
@@ -89,6 +92,9 @@ public class Follower extends RaftMember {
             return RaftResponse.reply(currentTerm, candidateId.equals(votedFor()));
         }
 
+        ctx.resetTimer(this, true);
+        ctx.joinSnapshot(); // ensure consistent between log epoch and machine status
+
         // term > currentTerm means a new election has been held, vote for the first seen candidate
         boolean voteGranted = logUpToDate(lastLogIndex, lastLogTerm);
         ID voteFor = voteGranted ? candidateId : null; // refuse to vote
@@ -108,6 +114,8 @@ public class Follower extends RaftMember {
             throw new AssertionError("leader invoke InstallSnapshot before AppendEntries");
         }
 
+        logger.debug("IS-Request[{}]({}) {} {}", leaderId, term, lastIncludedIndex, lastIncludedTerm);
+
         ctx.resetTimer(this, true);
         try {
             boolean success = ctx.installSnapshot(leaderId, lastIncludedIndex, lastIncludedTerm);
@@ -119,6 +127,7 @@ public class Follower extends RaftMember {
 
     @Override
     public void onTimeout() {
+        ctx.joinSnapshot();
         ctx.switchTo(Candidate.class, currentTerm + 1, ctx.nodeID());
         RaftParticipant participant = ctx.participant();
         if (participant instanceof Candidate) {
@@ -128,7 +137,8 @@ public class Follower extends RaftMember {
 
     @Override
     public void onFencing() {
-        ctx.abortSnapshot();
+        assertEventLoop();
+        ctx.joinSnapshot();
     }
 
     private boolean logContains(long index, long term) throws Exception {
@@ -150,7 +160,7 @@ public class Follower extends RaftMember {
     private boolean logUpToDate(long index, long term) throws Exception {
         Entry last = ctx.replicatedLog().last();
         if (last != null) {
-            return term > last.term() || (term == last.term() && index > last.index());
+            return term > last.term() || (term == last.term() && index >= last.index());
         } else {
             Entry epoch = ctx.replicatedLog().epoch();
             if (index > epoch.index() && term < epoch.term() ||

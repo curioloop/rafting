@@ -29,11 +29,13 @@ public class Leader extends RaftMember implements Leadership {
     private void prepareReplication() throws Exception {
         if (followerStatus != null) return;
         Entry last = ctx.replicatedLog().last();
-        long lastIndex = last == null ? ctx.replicatedLog().epoch().index(): last.index();
+        Entry epoch = ctx.replicatedLog().epoch();
+        long lastIndex = last == null ? epoch.index(): last.index();
         Set<ID> followers = ctx.cluster().remoteIDs();
         Map<ID, State> map = new HashMap<>(followers.size());
         for (ID follower : followers) {
             State state = new State();
+            state.lastEpoch = epoch.index();
             state.nextIndex = lastIndex + 1;
             map.put(follower, state);
         }
@@ -147,33 +149,33 @@ public class Leader extends RaftMember implements Leadership {
             state.increaseMono(lastRequest, state.lastRequest, now);
             RaftService raftService = ctx.cluster().remoteService(id, ctx.ctxID());
             if (raftService != null) {
-                long prevTerm = epoch.term(), prevIndex = epoch.index(), lastIndex;
-                long nextIndex = state.nextIndex - (state.nextIndex == epoch.index() ? 0 : 1);
                 try {
                     if (state.pendingInstallation) {
+
                         logger.debug("InstallSnapshot[{}] {} {} {} {}", id, currentTerm, ctx.nodeID(), epoch.index(), epoch.term());
 
                         Async<RaftResponse> response = raftService.installSnapshot(currentTerm, ctx.nodeID(), epoch.index(), epoch.term());
                         requestInFlight.incrementAndGet(state);
                         response.on(head, timeout, (result, error, canceled) -> {
-                            logger.debug("Response[{}]({}/{}) {} {}", id, nextIndex, result, error, canceled);
+                            logger.debug("IS-Response[{}] {} {} {}", id, currentTerm, result, error, canceled);
                             requestInFlight.decrementAndGet(state);
-                            if (canceled) return;
-                            if (error == null && result != null) {
+                            if (! canceled && error == null && result != null) {
                                 if (result.term() > currentTerm) {
                                     head.abortRequests();
                                     ctx.trySwitchTo(Follower.class, result.term(), id);
                                 } else {
-                                    if (result.success()) {
-                                        state.pendingInstallation = false;
-                                    }
+                                    state.updateIndex(epoch.index(), epoch.index(), result.success(), true);
                                 }
+                            } else if (error != null) {
+                                state.statFailure(System.currentTimeMillis());
                             }
                         });
                         continue; // wait for the installation to complete ...
                     }
 
-                    int fetchLimit = REPLICATE_LIMIT >> (heartbeat ? 1: 0);
+                    long prevTerm = epoch.term(), prevIndex = epoch.index(), lastIndex;
+                    long nextIndex = Math.max(state.nextIndex - 1, epoch.index());
+                    int fetchLimit = REPLICATE_LIMIT >> (heartbeat ? 1 : 0);
                     Entry[] entries = ctx.replicatedLog().batch(nextIndex, fetchLimit + 1);
                     if (entries != null && entries.length > 0) {
                         Entry prevEntry = entries[0];
@@ -198,7 +200,7 @@ public class Leader extends RaftMember implements Leadership {
                     Async<RaftResponse> response = raftService.appendEntries(currentTerm, ctx.nodeID(), prevIndex, prevTerm, entries, leaderCommit);
                     requestInFlight.incrementAndGet(state);
                     response.on(head, timeout, (result, error, canceled) -> {
-                        logger.debug("Response[{}]({}/{}) {} {} {}", id, nextIndex, lastIndex, result, error, canceled);
+                        logger.debug("AE-Response[{}] ({}/{}) {} {} {}", id, nextIndex, lastIndex, result, error, canceled);
                         requestInFlight.decrementAndGet(state);
                         final long current = System.currentTimeMillis();
                         if (! canceled && error == null && result != null) {
@@ -206,13 +208,9 @@ public class Leader extends RaftMember implements Leadership {
                                 head.abortRequests();
                                 ctx.trySwitchTo(Follower.class, result.term(), id);
                             } else {
-                                state.updateIndex(lastIndex, epoch.index(), result.success());
+                                state.updateIndex(epoch.index(), lastIndex, result.success(), false);
                                 if (result.success()) {
                                     tryCommit();
-                                } else {
-                                    if (state.nextIndex == epoch.index()) {
-                                        state.pendingInstallation = true;
-                                    }
                                 }
                                 state.statSuccess(current);
                             }

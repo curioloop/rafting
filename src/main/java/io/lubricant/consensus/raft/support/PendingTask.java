@@ -107,4 +107,8 @@ public abstract class PendingTask<T> extends FutureTask<T> {
             throw new RuntimeException(e.getCause());
         }
     }
+
+    public void join() throws Exception {
+        get();
+    }
 }

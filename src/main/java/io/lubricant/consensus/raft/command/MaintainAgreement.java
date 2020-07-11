@@ -93,7 +93,7 @@ public class MaintainAgreement {
         if (currentMills - lastMaintainSuccessTime < expectMaintainInterval) {
             return false;
         }
-        if (minimalLogIndex - lastAppliedIndex < dirtyLogTolerance) {
+        if (lastAppliedIndex - minimalLogIndex < dirtyLogTolerance) {
             return false;
         }
         if (recentCommandCount < stateChangeThreshold) {

@@ -33,6 +33,7 @@ public interface Leadership {
         volatile int requestInFlight; // 在途请求数量
         volatile int recentFailure;   // 最近连续请求失败次数
 
+        volatile long lastEpoch; // 已知的最新的日志起点
         volatile long nextIndex; // 下一条要发送的日志（初始为最后一条日志的 index）
         volatile long matchIndex; // 已经复制成功的最后一条日志（初始为 0）
         volatile boolean pendingInstallation; // 等待数据同步完成
@@ -62,15 +63,40 @@ public interface Leadership {
             Leadership.recentFailure.incrementAndGet(this);
         }
 
-        synchronized void updateIndex(long index, long epoch, boolean success) {
-            if (success) {
-                if (index > matchIndex) {
-                    nextIndex = index + 1;
-                    matchIndex = index;
+        synchronized void updateIndex(long epoch, long index, boolean success, boolean snapshot) {
+            if (index < matchIndex) {
+                throw new AbstractMethodError(String.format(
+                        "match index should not rollback: [%d %d %d %b] (%d %d %b %b)",
+                        lastEpoch, nextIndex, matchIndex, pendingInstallation,
+                        epoch, index, success, snapshot));
+            }
+
+            if (epoch < lastEpoch) return;
+            if (epoch > lastEpoch) {
+                lastEpoch = epoch;
+                nextIndex = Math.max(nextIndex, epoch + 1);
+            }
+
+            if (pendingInstallation != snapshot) return;
+
+            if (pendingInstallation) {
+                if (success) {
+                    nextIndex = Math.max(nextIndex, epoch + 1);
+                    pendingInstallation = false;
                 }
-            } else if (matchIndex == 0) {
-                long next = Math.max(nextIndex - REPLICATE_LIMIT, epoch + 1);
-                nextIndex = Math.min(nextIndex - 1, next);
+            } else {
+                if (success) {
+                    if (index > matchIndex) {
+                        nextIndex = index + 1;
+                        matchIndex = index;
+                    }
+                } else if (matchIndex == 0) {
+                    long next = Math.max(nextIndex - REPLICATE_LIMIT, epoch + 1);
+                    nextIndex = Math.min(nextIndex - 1, next);
+                    if (nextIndex <= epoch && ! pendingInstallation) {
+                        pendingInstallation = true;
+                    }
+                }
             }
         }
 

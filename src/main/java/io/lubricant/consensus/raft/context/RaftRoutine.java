@@ -7,12 +7,10 @@ import io.lubricant.consensus.raft.command.RaftLog.Entry;
 import io.lubricant.consensus.raft.command.RaftMachine;
 import io.lubricant.consensus.raft.command.RaftMachine.Checkpoint;
 import io.lubricant.consensus.raft.context.member.*;
-import io.lubricant.consensus.raft.support.PendingTask;
-import io.lubricant.consensus.raft.support.Promise;
-import io.lubricant.consensus.raft.support.SnapshotArchive;
+import io.lubricant.consensus.raft.support.*;
 import io.lubricant.consensus.raft.support.SnapshotArchive.PendingSnapshot;
 import io.lubricant.consensus.raft.support.SnapshotArchive.Snapshot;
-import io.lubricant.consensus.raft.support.TimeLimited;
+import io.lubricant.consensus.raft.support.StableLock.Persistence;
 import io.lubricant.consensus.raft.transport.RaftCluster.ID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -355,7 +353,7 @@ public class RaftRoutine implements AutoCloseable {
                                 "committed log entry (%d-%d) mismatch whit snapshot %d-%d",
                                 entry.index(), entry.term(), snap.index(), snap.term()));
                     }
-                    Future<Boolean> future = log.flush(entry.index());
+                    Future<Boolean> future = log.flush(entry.index(), entry.term());
                     logMaintainer.execute(() -> {
                         boolean compactSuccess = false;
                         try {
@@ -397,13 +395,14 @@ public class RaftRoutine implements AutoCloseable {
                 snapArchive.cleanPending(); // retry later
             }
         } else if (! installation.isPending()) {
+            PendingSnapshot snapshot = snapArchive.pendSnapshot(0, 0, null);
+            boolean expired = snapshot.isExpired(lastIncludedIndex, lastIncludedTerm);
             if (installation.isSuccess()) {
+                accomplishInstallation(context);
                 snapArchive.cleanPending();
-                context.snapshotInstallation = null;
-                return true;
+                if (! expired) return true; // install next snapshot
             }
-            PendingSnapshot snapshot = snapArchive.pendSnapshot(lastIncludedIndex, lastIncludedTerm, null);
-            if (snapshot.isExpired(lastIncludedIndex, lastIncludedTerm)) { // snapshot is expired
+            if (expired) { // snapshot is expired
                 snapArchive.pendSnapshot(lastIncludedIndex, lastIncludedTerm, snapSupplier.get()); // update snapshot
                 context.snapshotInstallation = null;
             } else { // apply snapshot fail
@@ -411,6 +410,30 @@ public class RaftRoutine implements AutoCloseable {
             }
         }
         return false;
+    }
+
+    /**
+     * 完成快照与日志之间的同步
+     * @param context
+     */
+    public void accomplishInstallation(RaftContext context) {
+        PendingTask<Void> installation = context.snapshotInstallation;
+        if (installation.isSuccess()) {
+            Entry milestone = context.stableStorage().restore().milestone;
+            while (true) {
+                try {
+                    Future<Boolean> flush = context.replicatedLog().flush(milestone.index(), milestone.term());
+                    if (Boolean.TRUE.equals(flush.get())) break;
+                } catch (Exception e) {
+                    logger.error("RaftContext({}) flush log failed", context.ctxID(), e);
+                }
+                logger.warn("RaftContext({}) flush log not success, retry after 30 seconds", context.ctxID());
+                try {
+                    TimeUnit.SECONDS.sleep(30); // warning: block the thread
+                } catch (InterruptedException ignored) {}
+            }
+        }
+        context.snapshotInstallation = null;
     }
 
     /**
@@ -445,6 +468,7 @@ public class RaftRoutine implements AutoCloseable {
                                     "checkpoint index is included %d <= %d", snapshot.lastIncludeIndex(), commitIndex));
                         }
                         machine.recover(snapshot);
+                        context.stableStorage().persist(snapshot); // critical option must success !
                         set(null);
                     } catch (Exception e) {
                         logger.error("RaftContext({}) restore from snapshot failed", context.ctxID(), e);

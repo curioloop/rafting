@@ -166,7 +166,9 @@ public class SnapshotTest {
                 System.out.println("maintain "+ success +" : " + fmt.format(LocalDateTime.now()));
             } else {
                 ma.increaseCommand();
-                ma.minimalLogIndex(++minLogIndex);
+                if (random.nextBoolean()) {
+                    ma.minimalLogIndex(++minLogIndex);
+                }
             }
 
             if (ma.needCompact()) {
@@ -176,7 +178,7 @@ public class SnapshotTest {
                 ma.finishCompaction(success);
                 System.out.println("compact "+ success +" : " +  fmt.format(LocalDateTime.now()));
             } else {
-                minLogIndex++;
+                // minLogIndex++;
                 ma.snapshotIncludeEntry(minLogIndex, 1);
             }
         }

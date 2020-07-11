@@ -124,5 +124,5 @@ public interface RaftLog extends AutoCloseable {
      * 清空日志数据至指定位置（index 单调递增）
      * 单线程访问
      */
-    Future<Boolean> flush(long index) throws Exception;
+    Future<Boolean> flush(long index, long term) throws Exception;
 }

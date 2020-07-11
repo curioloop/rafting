@@ -74,7 +74,7 @@ public class ContextManager implements AutoCloseable  {
             raftLog = stateLoader.restore(contextId, true);
             raftMachine = machineProvider.bootstrap(contextId, raftLog);
             RaftContext raftContext = new RaftContext(contextId, lock, snap, config, raftLog, raftMachine);
-            raftContext.initialize(cluster, routine, eventLoops.next());
+            raftContext.initialize(cluster, routine, eventLoops.next()).get();
             context = raftContext;
         } catch (Exception ex) {
             if (raftMachine != null) {

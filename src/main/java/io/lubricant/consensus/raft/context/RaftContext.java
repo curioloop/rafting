@@ -6,6 +6,8 @@ import io.lubricant.consensus.raft.context.member.Follower;
 import io.lubricant.consensus.raft.context.member.Membership;
 import io.lubricant.consensus.raft.context.member.TimerTicket;
 import io.lubricant.consensus.raft.support.*;
+import io.lubricant.consensus.raft.support.StableLock.Persistence;
+import io.lubricant.consensus.raft.support.SnapshotArchive.Snapshot;
 import io.lubricant.consensus.raft.transport.RaftCluster;
 import io.lubricant.consensus.raft.transport.RaftCluster.ID;
 import io.lubricant.consensus.raft.transport.RaftCluster.SnapService;
@@ -58,20 +60,50 @@ public class RaftContext {
         this.stateMachine = machine;
         this.stableStorage = lock;
         this.snapArchive = snap;
+
+        Snapshot snapshot = snapArchive.lastSnapshot();
+        long snapIndex = 0, snapTerm = 0;
+        if (snapshot != null) {
+            snapIndex = snapshot.lastIncludeIndex();
+            snapTerm = snapshot.lastIncludeTerm();
+        }
+
+        Entry epoch = replicatedLog.epoch();
+        boolean catchUp = snapshot == null ? epoch.index() == 0 && epoch.term() == 0 :
+                snapIndex >= epoch.index() && snapTerm >= epoch.term();
+        if (! catchUp) {
+            throw new AssertionError(String.format("snapshot(%d:%d) not catch up with log(%d:%d)",
+                    snapIndex, snapTerm, epoch.index(), epoch.term()));
+        }
+
         maintainAgreement = new MaintainAgreement(config);
-        maintainAgreement.minimalLogIndex(replicatedLog.epoch().index());
+        maintainAgreement.minimalLogIndex(epoch.index());
     }
 
-    public void initialize(RaftCluster cluster, RaftRoutine routine, EventLoop eventLoop) {
+    public Promise<Void> initialize(RaftCluster cluster, RaftRoutine routine, EventLoop eventLoop) {
         this.cluster = cluster;
         this.routine = routine;
         this.eventLoop = eventLoop;
+
+        Promise<Void> promise = new Promise<>();
         eventLoop.execute(() -> {
-            Map.Entry<Long, ID> restore = stableStorage.restore();
-            long term = restore == null ? 0: restore.getKey();
-            ID ballot = restore == null ? null: restore.getValue();
-            switchTo(Follower.class, term, ballot);
+            try {
+                Persistence restore = stableStorage.restore();
+                Entry epoch = replicatedLog.epoch();
+                Entry milestone = restore.milestone;
+                if (epoch.index() < milestone.index()) {
+                    logger.warn("Flush log during initialization {}:{} -> {}:{}", id,
+                            epoch.index(), epoch.term(), milestone.index(), milestone.term());
+                    replicatedLog.flush(milestone.index(), milestone.term());
+                }
+                switchTo(Follower.class, restore.term, restore.ballot);
+                promise.complete(null);
+            } catch (Exception e) {
+                logger.error("Initialize context failed {}", id, e);
+                promise.completeExceptionally(e);
+            }
         }, true);
+        return promise;
     }
 
     public void destroy() {
@@ -209,13 +241,19 @@ public class RaftContext {
     }
 
     /**
-     * 停止同步快照
+     * 等待日志和快照之间的同步完成（若快照已经下载完毕，且状态机已经加载该快照，此时必须等待同步完成）
      */
-    public void abortSnapshot() {
-        snapArchive.cleanPending();
-        if (snapshotInstallation != null) {
-            snapshotInstallation.cancel(false);
-            snapshotInstallation = null;
+    public void joinSnapshot() {
+        PendingTask<Void> installation = snapshotInstallation;
+        if (installation != null) {
+            logger.error("Join snapshot {}", id);
+            try {
+                installation.join();
+            } catch (Exception e) {
+                logger.error("Join snapshot exception {}", id, e);
+            }
+            routine.accomplishInstallation(this);
         }
+        snapArchive.cleanPending();
     }
 }

@@ -220,14 +220,13 @@ public class RocksLog implements RaftLog, Closeable {
     }
 
     @Override
-    public Future<Boolean> flush(long index) throws Exception {
+    public Future<Boolean> flush(long index, long term) throws Exception {
         long epochIndex = epochEntry.index();
-        long lastIndex = lastEntry.index();
-        if (index < epochIndex || lastIndex < index) {
+        if (index < epochIndex) {
             throw new IndexOutOfBoundsException(
-                    String.format("index:%d, bound:(%d,%d]", index, epochIndex, lastIndex));
+                    String.format("index:%d, epoch:%d", index, epochIndex));
         }
-        Entry newEpoch = new EntryKey(get(index));
+        Entry newEpoch = new EntryKey(index, term);
         db.deleteRange(longToBytes(epochIndex), longToBytes(index));
         db.put(epoch, INDEX, longToBytes(newEpoch.index()));
         db.put(epoch, TERM, longToBytes(newEpoch.term()));

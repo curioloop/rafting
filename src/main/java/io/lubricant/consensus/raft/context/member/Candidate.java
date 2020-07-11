@@ -32,7 +32,7 @@ public class Candidate extends RaftMember {
             return RaftResponse.failure(currentTerm);
         }
 
-        logger.debug("Request[{}]({}) {} {} {} {}", leaderId, term, prevLogIndex, prevLogTerm, leaderCommit, entries);
+        logger.debug("AE-Request[{}]({}) {} {} {} {}", leaderId, term, prevLogIndex, prevLogTerm, leaderCommit, entries);
 
         // term >= currentTerm means another candidate win the election in the same/later term
         ctx.switchTo(Follower.class, term, lastCandidate);
@@ -48,7 +48,7 @@ public class Candidate extends RaftMember {
             throw new AssertionError("candidate should not invoke requestVote to itself");
         }
 
-        logger.debug("Request[{}]({}) {} {}", candidateId, term, lastLogIndex, lastLogTerm);
+        logger.debug("RV-Request[{}]({}) {} {}", candidateId, term, lastLogIndex, lastLogTerm);
 
         if (term < currentTerm) {
             return RaftResponse.failure(currentTerm);
@@ -114,8 +114,8 @@ public class Candidate extends RaftMember {
 
                     Async<RaftResponse> response = raftService.requestVote(currentTerm, ctx.nodeID(), lastLogIndex, lastLogTerm);
                     response.on(head, timeout, (result, error, canceled) -> {
-                        if (canceled) return;
-                        if (error == null && result != null) {
+                        logger.debug("RV-Response[{}] {} {} {} {}", id, currentTerm, result, error, canceled);
+                        if (! canceled &&  error == null && result != null) {
                             if (result.term() > currentTerm) {
                                 head.abortRequests();
                                 ctx.trySwitchTo(Follower.class, result.term(), id);
