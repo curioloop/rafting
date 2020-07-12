@@ -161,14 +161,13 @@ public class RocksLog implements RaftLog, Closeable {
 
     @Override
     public void append(Entry[] entries) throws Exception {
-        Entry last = entries[entries.length - 1];
         RocksIterator iterator = db.newIterator();
-        iterator.seekForPrev(longToBytes(last.index()));
-        long prevLogIndex = 0;
+        iterator.seekForPrev(longToBytes(entries[0].index()));
+        long prevLogIndex = epochEntry.index();
         if (iterator.isValid()) {
             prevLogIndex = bytesToLong(iterator.key());
-        } else if (entries[0].index() != 1) {
-            throw new AssertionError("log index should start from 1");
+        } else if (entries[0].index() != prevLogIndex + 1) {
+            throw new AssertionError("log index should follow epoch closely");
         }
         Entry prev = null;
         for (Entry entry : entries) {

@@ -92,14 +92,14 @@ public class RaftContext {
                 Entry epoch = replicatedLog.epoch();
                 Entry milestone = restore.milestone;
                 if (epoch.index() < milestone.index()) {
-                    logger.warn("Flush log during initialization {}:{} -> {}:{}", id,
-                            epoch.index(), epoch.term(), milestone.index(), milestone.term());
+                    logger.warn("RaftCtx({}) flush log during initialization {}:{} -> {}:{}",
+                            id, epoch.index(), epoch.term(), milestone.index(), milestone.term());
                     replicatedLog.flush(milestone.index(), milestone.term());
                 }
                 switchTo(Follower.class, restore.term, restore.ballot);
                 promise.complete(null);
             } catch (Exception e) {
-                logger.error("Initialize context failed {}", id, e);
+                logger.error("RaftCtx({}) initialize failed", id);
                 promise.completeExceptionally(e);
             }
         }, true);
@@ -110,22 +110,22 @@ public class RaftContext {
         try {
             stateMachine.close();
         } catch (Exception e) {
-            logger.error("Close state machine failed {}", id, e);
+            logger.error("RaftCtx({}) close state machine error", id, e);
         }
         try {
             replicatedLog.close();
         } catch (Exception e) {
-            logger.error("Close replicated log failed {}", id, e);
+            logger.error("RaftCtx({}) close replicated log error", id, e);
         }
         try {
             stableStorage.close();
         } catch (Exception e) {
-            logger.error("Close stable storage failed {}", id, e);
+            logger.error("RaftCtx({}) close stable storage error", id, e);
         }
         stateMachine = null;
         replicatedLog = null;
         stableStorage = null;
-        logger.info("RaftContext({}) closed", ctxID());
+        logger.info("RaftCtx({}) closed", ctxID());
     }
 
     public String ctxID() { return id; }
@@ -246,13 +246,15 @@ public class RaftContext {
     public void joinSnapshot() {
         PendingTask<Void> installation = snapshotInstallation;
         if (installation != null) {
-            logger.error("Join snapshot {}", id);
+            logger.warn("RaftCtx({}) join snapshot {}", id);
             try {
                 installation.join();
             } catch (Exception e) {
-                logger.error("Join snapshot exception {}", id, e);
+                logger.error("RaftCtx({}) join snapshot detected exception", id, e);
             }
             routine.accomplishInstallation(this);
+            logger.error("RaftCtx({}) join snapshot completely", id);
+
         }
         snapArchive.cleanPending();
     }

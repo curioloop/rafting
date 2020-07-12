@@ -29,9 +29,9 @@ import java.util.concurrent.TimeUnit;
  */
 public class EventNode {
 
-    private final static Logger logger = LoggerFactory.getLogger(EventNode.class);
-
     class EventChannel {
+
+        private final Logger logger = LoggerFactory.getLogger(EventChannel.class);
 
         volatile boolean ready;
         volatile Channel channel;
@@ -121,6 +121,8 @@ public class EventNode {
 
     class SnapChannel extends PendingTask<Snapshot> {
 
+        private final Logger logger = LoggerFactory.getLogger(SnapChannel.class);
+
         private WaitSnapEvent event;
 
         private long index, term;
@@ -164,7 +166,7 @@ public class EventNode {
                                             if (msg instanceof TransSnapEvent) {
                                                 TransSnapEvent transSnap = ((TransSnapEvent) msg);
                                                 if (transSnap.isOK()) {
-                                                    logger.info("Trans snap from {} starting", dst);
+                                                    logger.info("Trans snap from {}", dst);
                                                     term = transSnap.term();
                                                     index = transSnap.index();
                                                     count = transSnap.length();
@@ -177,7 +179,7 @@ public class EventNode {
                                                         SnapChannel.this.file = raf.getChannel();
                                                     }
                                                 } else {
-                                                    logger.error("Trans snap from {} fail: {}", dst, transSnap.reason());
+                                                    logger.error("Trans snap from {} failed: {}", dst, transSnap.reason());
                                                     ctx.close();
                                                 }
                                             } else if (file != null) {

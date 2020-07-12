@@ -52,11 +52,11 @@ public abstract class PendingTask<T> extends FutureTask<T> {
         super(NULL);
     }
 
-    public <V> Future<V> perform(Trailer<V> trailer) {
+    public <V> Future<V> perform(Trailer... trailer) {
         if (UNSAFE.compareAndSwapInt(this, performedOffset, NEW, PENDING)) {
-            if (trailer != null) {
+            if (trailer != null && trailer.length > 0) {
                 promise = new Promise<>();
-                this.trailer = trailer;
+                this.trailer = trailer[0];
             }
             perform();
             return promise;
@@ -75,7 +75,7 @@ public abstract class PendingTask<T> extends FutureTask<T> {
     protected void done() {
         // maintain consistent behavior patterns with FutureTask
         // only guarantee the visibility for the same thread
-        UNSAFE.putOrderedInt(this, performed, PERFORMED);
+        UNSAFE.putOrderedInt(this, performedOffset, PERFORMED);
         if (trailer != null) {
             try {
                 promise.complete(trailer.after());
@@ -86,7 +86,7 @@ public abstract class PendingTask<T> extends FutureTask<T> {
     }
 
     public boolean isPending() {
-        return performed >= PENDING;
+        return performed <= PENDING;
     }
 
     @Override

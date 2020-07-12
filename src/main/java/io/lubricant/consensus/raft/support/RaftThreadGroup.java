@@ -1,5 +1,7 @@
 package io.lubricant.consensus.raft.support;
 
+import io.netty.util.concurrent.FastThreadLocalThread;
+
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.ThreadFactory;
@@ -49,7 +51,7 @@ public class RaftThreadGroup extends ThreadGroup {
             factory = new ThreadFactory() {
                 final AtomicInteger n = name.contains("%d") ? new AtomicInteger(): null;
                 public Thread newThread(Runnable r) {
-                    return new Thread(RaftThreadGroup.this, r,
+                    return new FastThreadLocalThread(RaftThreadGroup.this, r,
                             n == null ? name: String.format(name, n.incrementAndGet()));
                 }
             };

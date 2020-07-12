@@ -10,7 +10,6 @@ import io.lubricant.consensus.raft.context.member.*;
 import io.lubricant.consensus.raft.support.*;
 import io.lubricant.consensus.raft.support.SnapshotArchive.PendingSnapshot;
 import io.lubricant.consensus.raft.support.SnapshotArchive.Snapshot;
-import io.lubricant.consensus.raft.support.StableLock.Persistence;
 import io.lubricant.consensus.raft.transport.RaftCluster.ID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,7 +30,7 @@ public class RaftRoutine implements AutoCloseable {
 
     private static final int MACHINE_IDLE = 0;
     private static final int MACHINE_HALT = -1;
-    private static final int RETRY_INTERVAL = 1000; // 提交失败后的重试间隔
+    private static final int RETRY_INTERVAL = 2000; // 提交失败后的重试间隔
 
     private ScheduledExecutorService electionTimer; // 检查选举超时 (follower, candidate)
     private ScheduledExecutorService heartbeatKeeper; // 复制日志/发送心跳 (leader)
@@ -39,10 +38,11 @@ public class RaftRoutine implements AutoCloseable {
     private ExecutorService logMaintainer; // 定时生成快照/清理无效日志
 
     RaftRoutine() {
-        electionTimer = Executors.newScheduledThreadPool(3);
-        heartbeatKeeper = Executors.newScheduledThreadPool(3);
-        commandExecutor = Executors.newFixedThreadPool(5);
-        logMaintainer = Executors.newFixedThreadPool(5);
+        RaftThreadGroup raftThread = RaftThreadGroup.instance();
+        electionTimer = Executors.newScheduledThreadPool(3, raftThread.newFactory("Election-%d"));
+        heartbeatKeeper = Executors.newScheduledThreadPool(3, raftThread.newFactory("Heartbeat-%d"));
+        commandExecutor = Executors.newFixedThreadPool(5, raftThread.newFactory("Commando-%d"));
+        logMaintainer = Executors.newFixedThreadPool(5, raftThread.newFactory("Maintenance-%d"));
     }
 
     // 心跳超时
@@ -64,7 +64,7 @@ public class RaftRoutine implements AutoCloseable {
             if (ticket.deadline().compareAndSet(deadline, TimerTicket.TIMEOUT)) {
                 context.eventLoop().execute(() -> {
                     if (ticket.participant() == context.participant()) {
-                        logger.info("RaftContext({}) election timeout", context.ctxID());
+                        logger.info("RaftCtx({}) election timeout", context.ctxID());
                         ticket.participant().onTimeout(); // may be ignore
                     }
                 });
@@ -84,6 +84,8 @@ public class RaftRoutine implements AutoCloseable {
             throw new AssertionError("reset timer should be performed in event loop");
         }
 
+        // logger.debug("RaftCtx({})[{}] {} timer as {}", context.ctxID(), participant.currentTerm(), muted ? "mute": "reset", participant.getClass().getSimpleName());
+
         AtomicReference<TimerTicket> ticketHolder = context.ticketHolder;
 
         TimerTicket exist = ticketHolder.get();
@@ -96,7 +98,10 @@ public class RaftRoutine implements AutoCloseable {
                 context.envConfig().heartbeatInterval():
                 muted ? Long.MAX_VALUE : context.envConfig().electionTimeout();
 
-        long deadline = Math.max( Math.min(moment, Long.MAX_VALUE - 1) + 1, now + timeout);
+        long deadline = Math.max(
+                moment == Long.MAX_VALUE ? 0: Math.min(moment, Long.MAX_VALUE - 1) + 1,
+                Long.MAX_VALUE - timeout < now ? Long.MAX_VALUE : now + timeout);
+
         boolean reset = exist == null ||
                         exist.deadline().compareAndSet(moment, TimerTicket.INVALID) &&
                         exist.schedule().cancel(true);
@@ -198,7 +203,7 @@ public class RaftRoutine implements AutoCloseable {
             throw new Error(e);
         }
 
-        logger.info("RaftContext({}) convert to {}({})", context.ctxID(),
+        logger.info("RaftCtx({}) convert to {}({})", context.ctxID(),
                 member.role().getSimpleName(), member.term());
 
         if (! resetTimer(context, participant, false)) {
@@ -227,7 +232,7 @@ public class RaftRoutine implements AutoCloseable {
         int t = maxRounds - 1;
         int v = version.get();
         while (v > 0) {
-            logger.debug("RaftContext({}) committing commands {}", context.ctxID(), v);
+            // logger.debug("RaftCtx({}) commitment was triggered {} times recently", context.ctxID(), v);
             if (applyCommand(context, promises, Math.max(1000, v))) {
                 if ((v = version.addAndGet(-v)) > 0) { // check whether to proceed to the next round
                     if (--t < 0) { // yield the thread in fairness
@@ -236,6 +241,7 @@ public class RaftRoutine implements AutoCloseable {
                     }
                 }
             } else {
+                logger.warn("RaftCtx({}) commitment will retry again after {} ms", context.ctxID(), RETRY_INTERVAL);
                 TimeLimited.newTimer(RETRY_INTERVAL).schedule(() ->  // retry later
                         commandExecutor.execute(() -> applyEntry(context, promises, maxRounds)));
             }
@@ -265,14 +271,14 @@ public class RaftRoutine implements AutoCloseable {
                 }
                 long lastApplied = machine.lastApplied();
                 if (lastApplied <= prevApplied) {
-                    logger.error("RaftContext({}) application stuck at {}", context.ctxID(), lastApplied);
+                    logger.error("RaftCtx({}) application stuck at {}", context.ctxID(), lastApplied);
                     return false; // may be something wrong, retry latter
                 }
                 prevApplied = lastApplied;
                 context.maintainAgreement.increaseCommand();
             }
         } catch (Exception e) {
-            logger.error("RaftContext({}) apply command failed", context.ctxID(), e);
+            logger.error("RaftCtx({}) apply command failed", context.ctxID(), e);
             return false;
         } finally {
             maintainSnap(context);
@@ -286,7 +292,7 @@ public class RaftRoutine implements AutoCloseable {
         RaftMachine machine = context.stateMachine();
         if (agreement.needMaintain(machine.lastApplied())) {
             agreement.triggerMaintenance();
-            logger.info("RaftContext({}) maintain snap triggered", context.ctxID());
+            logger.info("RaftCtx({}) maintain snap triggered", context.ctxID());
             try {
                 Future<Checkpoint> future = machine.checkpoint(agreement.minimalLogIndex());
                 logMaintainer.execute(() -> {
@@ -311,7 +317,7 @@ public class RaftRoutine implements AutoCloseable {
                         }
                         maintainSuccess= true;
                     } catch (Exception e) {
-                        logger.error("RaftContext({}) record checkpoint failed", context.ctxID(), e);
+                        logger.error("RaftCtx({}) record checkpoint failed", context.ctxID(), e);
                     }
 
                     if (! updateLastInclude) {
@@ -321,14 +327,14 @@ public class RaftRoutine implements AutoCloseable {
                                 agreement.snapshotIncludeEntry(snapshot.lastIncludeIndex(), snapshot.lastIncludeTerm());
                             }
                         } catch (Exception e) {
-                            logger.error("RaftContext({}) update lastIncludedEntry failed", context.ctxID(), e);
+                            logger.error("RaftCtx({}) update lastIncludedEntry failed", context.ctxID(), e);
                         }
                     }
                     agreement.finishMaintenance(maintainSuccess);
-                    logger.info("RaftContext({}) maintain snap finished: {}", context.ctxID(), maintainSuccess);
+                    logger.info("RaftCtx({}) maintain snap finished: {}", context.ctxID(), maintainSuccess);
                 });
             } catch (Exception e) {
-                logger.error("RaftContext({}) record checkpoint failed", context.ctxID(), e);
+                logger.error("RaftCtx({}) record checkpoint failed", context.ctxID(), e);
                 agreement.finishMaintenance(false);
             }
         }
@@ -342,7 +348,7 @@ public class RaftRoutine implements AutoCloseable {
         MaintainAgreement agreement = context.maintainAgreement;
         if (agreement.needCompact()) {
             agreement.triggerCompaction();
-            logger.info("RaftContext({}) compact log triggered", context.ctxID());
+            logger.info("RaftCtx({}) compact log triggered", context.ctxID());
             try {
                 Entry snap = agreement.snapshotIncludeEntry();
                 RaftLog log = context.replicatedLog();
@@ -362,14 +368,14 @@ public class RaftRoutine implements AutoCloseable {
                                 compactSuccess = true;
                             }
                         } catch (Exception e) {
-                            logger.error("RaftContext({}) compact log failed", context.ctxID(), e);
+                            logger.error("RaftCtx({}) compact log failed", context.ctxID(), e);
                         }
                         agreement.finishCompaction(compactSuccess);
-                        logger.info("RaftContext({}) compact log finished: {}", context.ctxID(), compactSuccess);
+                        logger.info("RaftCtx({}) compact log finished: {}", context.ctxID(), compactSuccess);
                     });
                 }
             } catch (Exception e) {
-                logger.error("RaftContext({}) compact log failed", context.ctxID(), e);
+                logger.error("RaftCtx({}) compact log failed", context.ctxID(), e);
                 agreement.finishCompaction(false);
             }
         }
@@ -388,25 +394,33 @@ public class RaftRoutine implements AutoCloseable {
             PendingSnapshot snapshot = snapArchive.pendSnapshot(lastIncludedIndex, lastIncludedTerm, null);
             if (snapshot == null) {
                 snapshot = snapArchive.pendSnapshot(lastIncludedIndex, lastIncludedTerm, snapSupplier.get());
+                logger.info("RaftCtx({}) try obtaining snapshot({}:{})", context.ctxID(), lastIncludedIndex, lastIncludedTerm);
             }
             if (snapshot.isSuccess()) {
-                context.snapshotInstallation = restoreCheckpoint(context, snapshot.snapshot());
-            } else if (! snapshot.isPending()) { // download snapshot fail
-                snapArchive.cleanPending(); // retry later
+                Snapshot snap = snapshot.snapshot();
+                logger.info("RaftCtx({}) obtain snapshot({}:{}) successfully, then apply it to machine", context.ctxID(), snap.lastIncludeIndex(), snap.lastIncludeTerm());
+                context.snapshotInstallation = restoreCheckpoint(context, snap);
+            } else if (! snapshot.isPending()) {
+                snapArchive.cleanPending();
+                logger.error("RaftCtx({}) obtain snapshot({}:{}) failed, retry later", context.ctxID(), lastIncludedIndex, lastIncludedTerm);
             }
         } else if (! installation.isPending()) {
             PendingSnapshot snapshot = snapArchive.pendSnapshot(0, 0, null);
-            boolean expired = snapshot.isExpired(lastIncludedIndex, lastIncludedTerm);
+            Snapshot snap = snapshot.snapshot();
+            boolean notExpired = snap.lastIncludeIndex() > lastIncludedIndex || snap.lastIncludeIndex() == lastIncludedIndex && snap.lastIncludeTerm() >= lastIncludedTerm;
             if (installation.isSuccess()) {
+                logger.info("RaftCtx({}) apply snapshot({}:{}) successfully, then correct log epoch",  context.ctxID(), snap.lastIncludeIndex(), snap.lastIncludeTerm());
                 accomplishInstallation(context);
                 snapArchive.cleanPending();
-                if (! expired) return true; // install next snapshot
+                if (notExpired) return true;
             }
-            if (expired) { // snapshot is expired
-                snapArchive.pendSnapshot(lastIncludedIndex, lastIncludedTerm, snapSupplier.get()); // update snapshot
+            if (notExpired) {
+                logger.error("RaftCtx({}) apply snapshot({}:{}) failed, retry later",  context.ctxID(), snap.lastIncludeIndex(), snap.lastIncludeTerm());
+                context.snapshotInstallation = restoreCheckpoint(context, snapshot.snapshot());
+            } else {
+                logger.info("RaftCtx({}) hold expired snapshot({}:{}), try obtain snapshot({}:{}) again",  context.ctxID(), snap.lastIncludeIndex(), snap.lastIncludeTerm(), lastIncludedIndex, lastIncludedTerm);
+                snapArchive.pendSnapshot(lastIncludedIndex, lastIncludedTerm, snapSupplier.get());
                 context.snapshotInstallation = null;
-            } else { // apply snapshot fail
-                context.snapshotInstallation = restoreCheckpoint(context, snapshot.snapshot()); // try apply again
             }
         }
         return false;
@@ -420,18 +434,24 @@ public class RaftRoutine implements AutoCloseable {
         PendingTask<Void> installation = context.snapshotInstallation;
         if (installation.isSuccess()) {
             Entry milestone = context.stableStorage().restore().milestone;
+            int correctTimes = 0;
             while (true) {
+                logger.info("RaftCtx({}) correct log epoch with milestone({}:{}) for the {} time",
+                        context.ctxID(), milestone.index(), milestone.term(), ++correctTimes);
                 try {
                     Future<Boolean> flush = context.replicatedLog().flush(milestone.index(), milestone.term());
                     if (Boolean.TRUE.equals(flush.get())) break;
                 } catch (Exception e) {
-                    logger.error("RaftContext({}) flush log failed", context.ctxID(), e);
+                    logger.error("RaftCtx({}) correct log epoch failed", context.ctxID(), e);
                 }
-                logger.warn("RaftContext({}) flush log not success, retry after 30 seconds", context.ctxID());
+                logger.warn("RaftCtx({}) correct log epoch with milestone({}:{}) unsuccessfully, retry after 30 seconds",
+                        context.ctxID(), milestone.index(), milestone.term());
                 try {
                     TimeUnit.SECONDS.sleep(30); // warning: block the thread
                 } catch (InterruptedException ignored) {}
             }
+            logger.warn("RaftCtx({}) correct log epoch with milestone({}:{}) successfully in {} times",
+                    context.ctxID(), milestone.index(), milestone.term(), correctTimes);
         }
         context.snapshotInstallation = null;
     }
@@ -467,26 +487,35 @@ public class RaftRoutine implements AutoCloseable {
                             throw new AssertionError(String.format(
                                     "checkpoint index is included %d <= %d", snapshot.lastIncludeIndex(), commitIndex));
                         }
+                        logger.info("RaftCtx({}) try restoring snapshot({}:{})",
+                                context.ctxID(), snapshot.lastIncludeIndex(), snapshot.lastIncludeTerm());
                         machine.recover(snapshot);
                         context.stableStorage().persist(snapshot); // critical option must success !
+                        logger.info("RaftCtx({}) restore snapshot({}:{}) successfully",
+                                context.ctxID(), snapshot.lastIncludeIndex(), snapshot.lastIncludeTerm());
                         set(null);
                     } catch (Exception e) {
-                        logger.error("RaftContext({}) restore from snapshot failed", context.ctxID(), e);
+                        logger.error("RaftCtx({}) restore snapshot({}:{})  from snapshot failed",
+                                context.ctxID(), snapshot.lastIncludeIndex(), snapshot.lastIncludeTerm(), e);
                         setException(e);
                     }
                 }
             };
             commandExecutor.execute(() -> {
                 if (version.get() == MACHINE_HALT) {
-                    pendingCheckpoint.perform(null);
+                    pendingCheckpoint.perform();
                     if (version.compareAndSet(MACHINE_HALT, MACHINE_IDLE)) {
                         return;
                     }
                 }
                 throw new AssertionError("illegal commit version " + version.get());
             });
+            logger.info("RaftCtx({}) acquire exclusive commitment for snapshot({}:{}) successfully",
+                    context.ctxID(), snapshot.lastIncludeIndex(), snapshot.lastIncludeTerm());
             return pendingCheckpoint;
         }
+        logger.info("RaftCtx({}) not acquire exclusive commitment for snapshot({}:{}) yet for commit version is {}",
+                context.ctxID(), snapshot.lastIncludeIndex(), snapshot.lastIncludeTerm(), version.get());
         return null;
     }
 

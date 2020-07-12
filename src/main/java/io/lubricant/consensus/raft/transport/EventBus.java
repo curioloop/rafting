@@ -1,5 +1,6 @@
 package io.lubricant.consensus.raft.transport;
 
+import io.lubricant.consensus.raft.support.RaftThreadGroup;
 import io.lubricant.consensus.raft.transport.event.*;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.*;
@@ -128,8 +129,10 @@ public class EventBus extends Thread {
 
     @Override
     public void run() {
-        EventLoopGroup bossGroup = new NioEventLoopGroup();
-        EventLoopGroup workerGroup = new NioEventLoopGroup();
+        EventLoopGroup bossGroup = new NioEventLoopGroup(0 ,
+                RaftThreadGroup.instance().newFactory("EventSrvGrp-%d"));
+        EventLoopGroup workerGroup = new NioEventLoopGroup(0 ,
+                RaftThreadGroup.instance().newFactory("EventBusGrp-%d"));
         try {
             ServerBootstrap b = new ServerBootstrap();
             b.group(bossGroup, workerGroup)

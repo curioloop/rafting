@@ -55,7 +55,7 @@ public class Follower extends RaftMember {
             // skip entries before log epoch
             entries = purgeEntries(entries);
 
-            logger.debug("AE-Request[{}]({}) {} {} {} {}", leaderId, term, prevLogIndex, prevLogTerm, leaderCommit, entries);
+            logger.debug("AE-Seen[{}]({}) {} {} {} {}", leaderId, term, prevLogIndex, prevLogTerm, leaderCommit, entries);
 
             RaftLog log = ctx.replicatedLog();
             // leader may send heartbeat without log entries
@@ -114,7 +114,7 @@ public class Follower extends RaftMember {
             throw new AssertionError("leader invoke InstallSnapshot before AppendEntries");
         }
 
-        logger.debug("IS-Request[{}]({}) {} {}", leaderId, term, lastIncludedIndex, lastIncludedTerm);
+        logger.debug("IS-Seen[{}]({}) {} {}", leaderId, term, lastIncludedIndex, lastIncludedTerm);
 
         ctx.resetTimer(this, true);
         try {
@@ -181,7 +181,7 @@ public class Follower extends RaftMember {
             if (cursor == entries.length) {
                 entries = null;
             } else {
-                entries = Arrays.copyOfRange(entries, cursor, entries.length - cursor);
+                entries = Arrays.copyOfRange(entries, cursor, entries.length);
             }
         }
         return entries;

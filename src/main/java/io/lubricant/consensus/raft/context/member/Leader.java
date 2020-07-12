@@ -49,13 +49,15 @@ public class Leader extends RaftMember implements Leadership {
     }
 
     public boolean isReady() {
-        long now = System.currentTimeMillis();
-        int ready = 1, half = followerStatus.size() / 2;
-        for (State state : followerStatus.values()) {
-            if (state.isReady(
-                    ctx.envConfig().availableCriticalPoint(),
-                    ctx.envConfig().recoveryCoolDown(), now) && ++ready > half)
-                return true;
+        if (followerStatus != null) {
+            long now = System.currentTimeMillis();
+            int ready = 1, half = followerStatus.size() / 2;
+            for (State state : followerStatus.values()) {
+                if (state.isReady(
+                        ctx.envConfig().availableCriticalPoint(),
+                        ctx.envConfig().recoveryCoolDown(), now) && ++ready > half)
+                    return true;
+            }
         }
         return false;
     }
@@ -157,17 +159,18 @@ public class Leader extends RaftMember implements Leadership {
                         Async<RaftResponse> response = raftService.installSnapshot(currentTerm, ctx.nodeID(), epoch.index(), epoch.term());
                         requestInFlight.incrementAndGet(state);
                         response.on(head, timeout, (result, error, canceled) -> {
-                            logger.debug("IS-Response[{}] {} {} {}", id, currentTerm, result, error, canceled);
+                            logger.debug("IS-Echo[{}] {} {} {} <{}:{}>", id, currentTerm, result, error, canceled, epoch.index(), epoch.term());
                             requestInFlight.decrementAndGet(state);
                             if (! canceled && error == null && result != null) {
                                 if (result.term() > currentTerm) {
                                     head.abortRequests();
                                     ctx.trySwitchTo(Follower.class, result.term(), id);
                                 } else {
+                                    state.statSuccess(System.currentTimeMillis(), ! result.success());
                                     state.updateIndex(epoch.index(), epoch.index(), result.success(), true);
                                 }
-                            } else if (error != null) {
-                                state.statFailure(System.currentTimeMillis());
+                            } else {
+                                state.statFailure(System.currentTimeMillis(), error != null, result != null && ! result.success());
                             }
                         });
                         continue; // wait for the installation to complete ...
@@ -200,7 +203,8 @@ public class Leader extends RaftMember implements Leadership {
                     Async<RaftResponse> response = raftService.appendEntries(currentTerm, ctx.nodeID(), prevIndex, prevTerm, entries, leaderCommit);
                     requestInFlight.incrementAndGet(state);
                     response.on(head, timeout, (result, error, canceled) -> {
-                        logger.debug("AE-Response[{}] ({}/{}) {} {} {}", id, nextIndex, lastIndex, result, error, canceled);
+                        // logger.debug("{} {} {} {} {}", id, state.lastEpoch, state.nextIndex, state.matchIndex, state.pendingInstallation);
+                        logger.debug("AE-Echo[{}] ({}/{}) {} {} {} <{}:{}>", id, nextIndex, lastIndex, result, error, canceled, epoch.index(), epoch.term());
                         requestInFlight.decrementAndGet(state);
                         final long current = System.currentTimeMillis();
                         if (! canceled && error == null && result != null) {
@@ -208,21 +212,21 @@ public class Leader extends RaftMember implements Leadership {
                                 head.abortRequests();
                                 ctx.trySwitchTo(Follower.class, result.term(), id);
                             } else {
+                                state.statSuccess(current, ! result.success());
                                 state.updateIndex(epoch.index(), lastIndex, result.success(), false);
                                 if (result.success()) {
                                     tryCommit();
                                 }
-                                state.statSuccess(current);
                             }
-                        } else if (error != null) {
-                            state.statFailure(current);
+                        } else {
+                            state.statFailure(current, error != null, result != null && ! result.success());
                         }
                     });
                 } catch (Exception e) {
                     logger.error("Invoke appendEntries failed {} {}", ctx.ctxID(), id, e);
                 }
             } else {
-                state.statFailure(now); // service is not available
+                state.statFailure(now, true, false); // service is not available
             }
         }
     }

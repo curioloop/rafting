@@ -74,22 +74,22 @@ public class ContextManager implements AutoCloseable  {
             raftLog = stateLoader.restore(contextId, true);
             raftMachine = machineProvider.bootstrap(contextId, raftLog);
             RaftContext raftContext = new RaftContext(contextId, lock, snap, config, raftLog, raftMachine);
-            raftContext.initialize(cluster, routine, eventLoops.next()).get();
+            raftContext.initialize(cluster, routine, eventLoops.next()).get(); // block till initialization finished
             context = raftContext;
         } catch (Exception ex) {
             if (raftMachine != null) {
                 try { raftMachine.close(); } catch (Exception e) {
-                    logger.error("Close raft machine failed", e);
+                    logger.error("Close RaftContext({}) raft machine failed", contextId, e);
                 }
             }
             if (raftLog != null) {
                 try { raftLog.close(); } catch (Exception e) {
-                    logger.error("Close raft log failed", e);
+                    logger.error("Close RaftContext({}) raft log failed", contextId, e);
                 }
             }
             if (lock != null) {
                 try { lock.close(); } catch (IOException e) {
-                    logger.error("Close lock file failed", e);
+                    logger.error("Close RaftContext({}) lock file failed", contextId, e);
                 }
             }
 
@@ -97,7 +97,7 @@ public class ContextManager implements AutoCloseable  {
             throw ex;
         }
 
-        logger.info("RaftContext({}) created successfully", contextId);
+        logger.info("Create RaftContext({}) successfully", contextId);
         contextMap.put(contextId, context);
         return context;
     }

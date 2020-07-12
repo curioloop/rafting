@@ -1,7 +1,6 @@
 package io.lubricant.consensus.raft.context.member;
 
 import io.lubricant.consensus.raft.RaftParticipant;
-import io.lubricant.consensus.raft.command.RaftLog.Entry;
 import io.lubricant.consensus.raft.transport.RaftCluster.ID;
 
 import java.util.Arrays;
@@ -20,6 +19,7 @@ public interface Leadership {
 
     AtomicIntegerFieldUpdater<State>
             requestInFlight = AtomicIntegerFieldUpdater.newUpdater(State.class, "requestInFlight"),
+            rejectFailure = AtomicIntegerFieldUpdater.newUpdater(State.class, "rejectFailure"),
             recentFailure = AtomicIntegerFieldUpdater.newUpdater(State.class, "recentFailure");
 
     /**
@@ -31,7 +31,8 @@ public interface Leadership {
         volatile long requestSuccess; // 最近一次发送心跳成功的时间
         volatile long requestFailure; // 最近一次发送心跳失败的时间
         volatile int requestInFlight; // 在途请求数量
-        volatile int recentFailure;   // 最近连续请求失败次数
+        volatile int rejectFailure;   // 请求连续被拒绝次数
+        volatile int recentFailure;   // RPC调用连续失败次数
 
         volatile long lastEpoch; // 已知的最新的日志起点
         volatile long nextIndex; // 下一条要发送的日志（初始为最后一条日志的 index）
@@ -51,16 +52,26 @@ public interface Leadership {
             return requestSuccess != 0 && ! (pendingInstallation || isUnhealthy(criticalPoint, coolDown, now));
         }
 
-        void statSuccess(long now) {
+        void statSuccess(long now, boolean reject) {
             increaseMono(Leadership.requestSuccess, requestSuccess, now);
             if (recentFailure != 0) {
                 recentFailure = 0;
             }
+            if (reject) {
+                Leadership.rejectFailure.incrementAndGet(this);
+            } else if (rejectFailure != 0) {
+                rejectFailure = 0;
+            }
         }
 
-        void statFailure(long now) {
+        void statFailure(long now, boolean unreachable, boolean reject) {
             increaseMono(Leadership.requestFailure, requestFailure, now);
-            Leadership.recentFailure.incrementAndGet(this);
+            if (unreachable) {
+                Leadership.recentFailure.incrementAndGet(this);
+            }
+            if (reject) {
+                Leadership.rejectFailure.incrementAndGet(this);
+            }
         }
 
         synchronized void updateIndex(long epoch, long index, boolean success, boolean snapshot) {
@@ -73,8 +84,9 @@ public interface Leadership {
 
             if (epoch < lastEpoch) return;
             if (epoch > lastEpoch) {
+                // 当同步落后于 epoch 时，触发快照同步
                 lastEpoch = epoch;
-                nextIndex = Math.max(nextIndex, epoch + 1);
+                nextIndex = nextIndex > epoch ? nextIndex : epoch;
             }
 
             if (pendingInstallation != snapshot) return;
@@ -91,12 +103,15 @@ public interface Leadership {
                         matchIndex = index;
                     }
                 } else if (matchIndex == 0) {
-                    long next = Math.max(nextIndex - REPLICATE_LIMIT, epoch + 1);
+                    // 必须至少尝试一次 epoch + 1 对应的日志，避免发起不必要的快照同步
+                    long step = Math.round(Math.log(Math.E + rejectFailure));
+                    long next = Math.max(nextIndex - step, epoch + 1);
                     nextIndex = Math.min(nextIndex - 1, next);
-                    if (nextIndex <= epoch && ! pendingInstallation) {
-                        pendingInstallation = true;
-                    }
                 }
+            }
+
+            if (nextIndex <= epoch && ! pendingInstallation) {
+                pendingInstallation = true;
             }
         }
 
