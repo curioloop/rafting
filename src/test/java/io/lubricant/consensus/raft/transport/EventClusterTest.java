@@ -26,7 +26,7 @@ public class EventClusterTest {
     // 实现 RPC 调用
     // 超时机制
     public EventClusterTest(NodeID local, List<NodeID> remote, EventBus.EventDispatcher dispatcher) {
-        eventBus = new EventBus(local.port(), dispatcher);
+        eventBus = new EventBus(local, dispatcher);
         eventLoops = new NioEventLoopGroup(remote.size());
         eventNodes = new HashMap<>();
         for (NodeID nodeID : remote) {

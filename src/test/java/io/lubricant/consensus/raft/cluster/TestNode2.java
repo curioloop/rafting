@@ -13,6 +13,10 @@ import java.util.concurrent.ThreadLocalRandom;
 
 public class TestNode2 {
 
+    static {
+        System.setProperty("LOG_FILE_NAME", "raft2");
+    }
+
     private static final Logger logger = LoggerFactory.getLogger(TestNode2.class);
 
     public static void main(String[] args) throws Exception {
@@ -21,9 +25,10 @@ public class TestNode2 {
         RaftClient root = container.getClient("root");
         while (true) {
             try {
-                int rand = ThreadLocalRandom.current().nextInt(100);
-                Boolean result = root.execute(new AppendCommand("node2-" + rand), 1000);
-                logger.info("execute result: {}", result);
+                int rand = ThreadLocalRandom.current().nextInt(1000);
+                root.submit(new AppendCommand("node2-" + rand));
+//                Boolean result = root.execute(new AppendCommand("node2-" + rand), 1000);
+//                logger.info("execute result: {}", result);
             } catch (Throwable ex) {
                 if (ex instanceof ExecutionException) {
                     ex = ex.getCause();
@@ -32,7 +37,7 @@ public class TestNode2 {
                     logger.info("execute failed: {}", ex.getClass().getSimpleName());
                 }
             }
-            Thread.sleep(5000);
+            Thread.sleep(10);
         }
     }
 

@@ -13,27 +13,32 @@ import java.util.concurrent.Future;
 
 public class FileMachine implements RaftMachine {
 
-    private final String path;
-    private RandomAccessFile meta;
+    private final Path path;
     private BufferedWriter writer;
     private CmdSerializer serializer;
     private volatile long lastApplied;
+    private volatile boolean closed;
 
     public FileMachine(String path, CmdSerializer serializer) throws IOException {
-        this.path = Objects.requireNonNull(path);
-        this.meta = new RandomAccessFile(path + "-meta", "rw");
+        this.path = Paths.get(Objects.requireNonNull(path));
+        if (Files.notExists(this.path)) {
+            Files.createFile(this.path);
+        }
+        FileReader in = new FileReader(this.path.toFile());
+        LineNumberReader reader = new LineNumberReader(in);
+        reader.skip(Long.MAX_VALUE);
+        lastApplied = reader.getLineNumber() + Long.signum(reader.getLineNumber());
+        reader.close();
+
+        /*in = new FileReader(this.path.toFile());
+        reader = new LineNumberReader(in);
+        String line , last = null;
+        while ((line = reader.readLine()) != null) last = line;
+        System.out.println(String.format("LAST LINE IS %s (%d) (%d)", last, reader.getLineNumber(), lastApplied));
+        if (lastApplied != reader.getLineNumber()) throw new AssertionError();*/
+
         this.writer = new BufferedWriter(new FileWriter(path, true));
         this.serializer = serializer;
-        if (meta.length() > 0) {
-            lastApplied = meta.readLong();
-        }
-    }
-
-    private void updateLastApplied(long index) throws IOException {
-        lastApplied = index;
-        meta.seek(0);
-        meta.writeLong(index);
-        meta.getFD().sync();
     }
 
     @Override
@@ -41,19 +46,24 @@ public class FileMachine implements RaftMachine {
         return lastApplied;
     }
 
+    private void updateLastApplied(long index) throws IOException {
+        if (index != lastApplied + 1)
+            throw new IllegalArgumentException("not continue index " + lastApplied + " " + index);
+        lastApplied = index;
+    }
+
     @Override
     public Object apply(RaftLog.Entry entry) throws Exception {
+        if (closed) throw new IllegalStateException("closed");
         RaftClient.Command command = serializer.deserialize(entry);
         return apply(entry.index(), command);
     }
 
-    public boolean apply(long index, RaftClient.Command command) throws IOException {
+    public synchronized boolean apply(long index, RaftClient.Command command) throws IOException {
 
         if (index <= lastApplied) {
             throw new AssertionError(String.format("log entry is already applied %d <= %d", index, lastApplied));
         }
-
-        updateLastApplied(index); // no rollback
 
         if (command == null) {
             throw new NullPointerException("command");
@@ -61,9 +71,12 @@ public class FileMachine implements RaftMachine {
 
         if (command instanceof AppendCommand) {
             AppendCommand append = (AppendCommand) command;
-            writer.newLine();
-            writer.write(append.line());
+            if (lastApplied > 0) {
+                writer.newLine();
+            }
+            writer.write(index + ":" + append.line());
             writer.flush();
+            updateLastApplied(index);
             return true;
         }
 
@@ -71,14 +84,15 @@ public class FileMachine implements RaftMachine {
     }
 
     @Override
-    public Future<Checkpoint> checkpoint(long mustIncludeIndex) throws Exception {
+    public synchronized Future<Checkpoint> checkpoint(long mustIncludeIndex) throws Exception {
+        if (closed) throw new IllegalStateException("closed");
         if (mustIncludeIndex > lastApplied) {
             throw new AssertionError(String.format(
                     "expecting a not existed index %d > %d", mustIncludeIndex, lastApplied));
         }
         Path tempFile = Files.createTempFile(null, null);
         writer.flush();
-        Files.copy(Paths.get(path), tempFile.toAbsolutePath(), StandardCopyOption.REPLACE_EXISTING);
+        Files.copy(path, tempFile.toAbsolutePath(), StandardCopyOption.REPLACE_EXISTING);
         return CompletableFuture.completedFuture(new Checkpoint(tempFile, lastApplied){
             @Override
             public void release() {
@@ -90,19 +104,26 @@ public class FileMachine implements RaftMachine {
     }
 
     @Override
-    public void recover(Checkpoint checkpoint) throws Exception {
+    public synchronized void recover(Checkpoint checkpoint) throws Exception {
+        if (closed) throw new IllegalStateException("closed");
+        if (checkpoint.lastIncludeIndex() < lastApplied)
+            throw new IllegalArgumentException("invalid snapshot " + lastApplied + " " + checkpoint.lastIncludeIndex() );
         writer.close();
         try {
-            Files.copy(checkpoint.path(), Paths.get(path), StandardCopyOption.REPLACE_EXISTING);
-            updateLastApplied(checkpoint.lastIncludeIndex());
+            Files.copy(checkpoint.path(), this.path, StandardCopyOption.REPLACE_EXISTING);
+            lastApplied = checkpoint.lastIncludeIndex();
         } finally {
-            writer = new BufferedWriter(new FileWriter(path, true));
+            writer = new BufferedWriter(new FileWriter(this.path.toFile(), true));
         }
     }
 
     @Override
-    public void close() throws Exception {
-        meta.close();
-        writer.close();
+    public synchronized void close() throws Exception {
+        if (! closed) {
+            closed = true;
+            writer.close();
+        } else {
+            throw new IllegalStateException("close again");
+        }
     }
 }

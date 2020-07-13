@@ -13,6 +13,8 @@ import io.netty.util.concurrent.GenericFutureListener;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.concurrent.ConcurrentHashMap;
+
 /**
  * 事件总线（接收其他节点发送的事件）
  */
@@ -26,17 +28,22 @@ public class EventBus extends Thread {
         TransSnapEvent on(WaitSnapEvent event);
     }
 
+    private final AttributeKey<NodeID> CHANNEL_ID =
+            AttributeKey.newInstance("channelID");
+
     private final AttributeKey<String> CHANNEL_NAME =
             AttributeKey.newInstance("channelName");
 
-    private final int port;
+    private final NodeID local;
     private final EventDispatcher dispatcher;
+    private final ConcurrentHashMap<NodeID, Channel> nodes;
     private Channel channel;
 
-    public EventBus(int port, EventDispatcher dispatcher) {
-        super("EventBus-" + port);
-        this.port = port;
+    public EventBus(NodeID id, EventDispatcher dispatcher) {
+        super("EventBus-" + id.port());
+        this.local = id;
         this.dispatcher = dispatcher;
+        this.nodes = new ConcurrentHashMap<>();
     }
 
     private class DisconnectedHandler extends ChannelInboundHandlerAdapter {
@@ -50,6 +57,12 @@ public class EventBus extends Thread {
 
         @Override
         public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+            if (ctx.channel().hasAttr(CHANNEL_ID)) {
+                NodeID nodeID = ctx.channel().attr(CHANNEL_ID).get();
+                if (nodes.remove(nodeID) == null) {
+                    logger.error("Node ID not found {}", nodeID);
+                }
+            }
             Attribute<String> name = ctx.channel().attr(CHANNEL_NAME);
             logger.info("Node channel {} closed", name.get());
         }
@@ -62,8 +75,13 @@ public class EventBus extends Thread {
             if (msg instanceof ShakeHandEvent) {
                 try {
                     String message = ((ShakeHandEvent) msg).message();
-                    NodeID nodeID = NodeID.fromString(message);
                     name.set(message);
+                    NodeID nodeID = NodeID.fromString(message);
+                    if (local.equals(nodeID) || nodes.containsKey(nodeID) ||
+                        nodes.computeIfAbsent(nodeID, k -> ctx.channel()) != ctx.channel()) {
+                        throw new IllegalStateException("Duplicate connection " + nodeID);
+                    }
+                    ctx.channel().attr(CHANNEL_ID).set(nodeID);
                     ctx.pipeline().replace(
                             EventCodec.STR_EVENT_DECODER,
                             EventCodec.BIN_EVENT_DECODER,
@@ -129,10 +147,8 @@ public class EventBus extends Thread {
 
     @Override
     public void run() {
-        EventLoopGroup bossGroup = new NioEventLoopGroup(0 ,
-                RaftThreadGroup.instance().newFactory("EventSrvGrp-%d"));
-        EventLoopGroup workerGroup = new NioEventLoopGroup(0 ,
-                RaftThreadGroup.instance().newFactory("EventBusGrp-%d"));
+        EventLoopGroup bossGroup = new NioEventLoopGroup(1 , RaftThreadGroup.instance().newFactory("EventSrvGrp-%d"));
+        EventLoopGroup workerGroup = new NioEventLoopGroup(0 ,  RaftThreadGroup.instance().newFactory("EventBusGrp-%d"));
         try {
             ServerBootstrap b = new ServerBootstrap();
             b.group(bossGroup, workerGroup)
@@ -151,7 +167,7 @@ public class EventBus extends Thread {
                     })
                     .option(ChannelOption.SO_BACKLOG, 128)
                     .childOption(ChannelOption.SO_KEEPALIVE, true);
-            ChannelFuture f = b.bind(port).addListener(new GenericFutureListener<ChannelFuture>() {
+            ChannelFuture f = b.bind(local.port()).addListener(new GenericFutureListener<ChannelFuture>() {
                 @Override
                 public void operationComplete(ChannelFuture future) throws Exception {
                     logger.info("EventBus is ready");

@@ -38,7 +38,7 @@ public class NettyCluster implements RaftCluster, EventBus.EventDispatcher {
         List<NodeID> remote = remoteURIs.stream().map(uri -> new NodeID(uri.getHost(), uri.getPort())).collect(Collectors.toList());
 
         localID = local;
-        eventBus = new EventBus(local.port(), this);
+        eventBus = new EventBus(local, this);
         eventLoops = new NioEventLoopGroup(remote.size(), RaftThreadGroup.instance().newFactory("EventNodeGrp-%d"));
         snapEventLoop = new NioEventLoopGroup(1, RaftThreadGroup.instance().newFactory("SnapNodeGrp-%d"));
         remoteNodes = new HashMap<>();
