@@ -2,7 +2,7 @@
 ### Raft library implemented in Java
 
 - Multi-Raft is supported
-- Only implement `AppendEntires` and `RequestVote`
+- Implement `AppendEntires`, `RequestVote` and `InstallSnapshot`
 - Design focuses on understanding
 
 ### Architecture

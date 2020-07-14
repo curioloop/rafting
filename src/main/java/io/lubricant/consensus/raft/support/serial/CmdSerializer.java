@@ -3,6 +3,7 @@ package io.lubricant.consensus.raft.support.serial;
 
 import io.lubricant.consensus.raft.command.RaftClient.Command;
 import io.lubricant.consensus.raft.command.RaftLog.Entry;
+import io.lubricant.consensus.raft.support.anomaly.SerializeException;
 
 /**
  * 命令序列化器

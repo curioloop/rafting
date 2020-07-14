@@ -3,8 +3,10 @@ package io.lubricant.consensus.raft.command;
 import io.lubricant.consensus.raft.RaftParticipant;
 import io.lubricant.consensus.raft.context.RaftContext;
 import io.lubricant.consensus.raft.context.member.Leader;
-import io.lubricant.consensus.raft.context.member.Leadership.*;
 import io.lubricant.consensus.raft.support.Promise;
+import io.lubricant.consensus.raft.support.anomaly.BusyLoopException;
+import io.lubricant.consensus.raft.support.anomaly.NotLeaderException;
+import io.lubricant.consensus.raft.support.anomaly.NotReadyException;
 
 import java.io.Serializable;
 import java.util.Map;

@@ -2,7 +2,7 @@ package io.lubricant.consensus.raft.support;
 
 import io.lubricant.consensus.raft.command.RaftLog;
 import io.lubricant.consensus.raft.support.serial.Serialization;
-import io.lubricant.consensus.raft.support.serial.SerializeException;
+import io.lubricant.consensus.raft.support.anomaly.SerializeException;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import org.junit.Test;

@@ -1,7 +1,7 @@
 package io.lubricant.consensus.raft.transport;
 
 import io.lubricant.consensus.raft.support.serial.Serialization;
-import io.lubricant.consensus.raft.support.serial.SerializeException;
+import io.lubricant.consensus.raft.support.anomaly.SerializeException;
 import io.lubricant.consensus.raft.transport.event.*;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;

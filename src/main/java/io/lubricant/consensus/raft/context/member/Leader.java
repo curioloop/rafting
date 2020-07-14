@@ -6,6 +6,7 @@ import io.lubricant.consensus.raft.command.RaftClient.Command;
 import io.lubricant.consensus.raft.command.RaftLog.Entry;
 import io.lubricant.consensus.raft.context.RaftContext;
 import io.lubricant.consensus.raft.support.Promise;
+import io.lubricant.consensus.raft.support.anomaly.NotLeaderException;
 import io.lubricant.consensus.raft.transport.RaftCluster.ID;
 import io.lubricant.consensus.raft.transport.rpc.Async;
 import org.slf4j.Logger;

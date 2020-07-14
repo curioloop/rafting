@@ -4,6 +4,7 @@ import com.esotericsoftware.kryo.Kryo;
 import com.esotericsoftware.kryo.io.Input;
 import com.esotericsoftware.kryo.io.Output;
 import com.esotericsoftware.kryo.pool.KryoPool;
+import io.lubricant.consensus.raft.support.anomaly.SerializeException;
 import io.netty.buffer.ByteBuf;
 import org.objenesis.strategy.StdInstantiatorStrategy;
 

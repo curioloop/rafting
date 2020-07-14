@@ -1,4 +1,4 @@
-package io.lubricant.consensus.raft.support.serial;
+package io.lubricant.consensus.raft.support.anomaly;
 
 
 /**
@@ -12,10 +12,6 @@ public class SerializeException extends Exception {
 
     public SerializeException(Exception ex) {
         super(ex);
-    }
-
-    public SerializeException(String msg, Exception ex) {
-        super(msg, ex);
     }
 
 }

@@ -3,7 +3,7 @@ package io.lubricant.consensus.raft.command.storage;
 import io.lubricant.consensus.raft.command.RaftClient.Command;
 import io.lubricant.consensus.raft.command.RaftLog;
 import io.lubricant.consensus.raft.support.serial.Serialization;
-import io.lubricant.consensus.raft.support.serial.SerializeException;
+import io.lubricant.consensus.raft.support.anomaly.SerializeException;
 import org.rocksdb.*;
 import org.slf4j.LoggerFactory;
 
