@@ -10,7 +10,8 @@ import java.util.concurrent.atomic.AtomicLongFieldUpdater;
 
 public interface Leadership {
 
-    int REPLICATE_LIMIT = 10; // 一次传输的日志数量
+    int REPLICATE_LIMIT = 50; // 单次日志传输数量
+    int IN_FLIGHT_LIMIT = 20; // 在途请求数量限制
 
     AtomicLongFieldUpdater<State>
             lastRequest = AtomicLongFieldUpdater.newUpdater(State.class, "lastRequest"),
@@ -19,7 +20,7 @@ public interface Leadership {
 
     AtomicIntegerFieldUpdater<State>
             requestInFlight = AtomicIntegerFieldUpdater.newUpdater(State.class, "requestInFlight"),
-            rejectFailure = AtomicIntegerFieldUpdater.newUpdater(State.class, "rejectFailure"),
+            recentRejection = AtomicIntegerFieldUpdater.newUpdater(State.class, "recentRejection"),
             recentFailure = AtomicIntegerFieldUpdater.newUpdater(State.class, "recentFailure");
 
     /**
@@ -31,7 +32,7 @@ public interface Leadership {
         volatile long requestSuccess; // 最近一次发送心跳成功的时间
         volatile long requestFailure; // 最近一次发送心跳失败的时间
         volatile int requestInFlight; // 在途请求数量
-        volatile int rejectFailure;   // 请求连续被拒绝次数
+        volatile int recentRejection;  // 请求连续被拒绝次数
         volatile int recentFailure;   // RPC调用连续失败次数
 
         volatile long lastEpoch; // 已知的最新的日志起点
@@ -58,9 +59,9 @@ public interface Leadership {
                 recentFailure = 0;
             }
             if (reject) {
-                Leadership.rejectFailure.incrementAndGet(this);
-            } else if (rejectFailure != 0) {
-                rejectFailure = 0;
+                Leadership.recentRejection.incrementAndGet(this);
+            } else if (recentRejection != 0) {
+                recentRejection = 0;
             }
         }
 
@@ -70,7 +71,7 @@ public interface Leadership {
                 Leadership.recentFailure.incrementAndGet(this);
             }
             if (reject) {
-                Leadership.rejectFailure.incrementAndGet(this);
+                Leadership.recentRejection.incrementAndGet(this);
             }
         }
 
@@ -104,7 +105,7 @@ public interface Leadership {
                     }
                 } else if (matchIndex == 0) {
                     // 必须至少尝试一次 epoch + 1 对应的日志，避免发起不必要的快照同步
-                    long step = Math.round(Math.log(Math.E + rejectFailure));
+                    long step = Math.round(Math.log(Math.E + recentRejection)) ;
                     long next = Math.max(nextIndex - step, epoch + 1);
                     nextIndex = Math.min(nextIndex - 1, next);
                 }
@@ -130,6 +131,18 @@ public interface Leadership {
             // 返回两个索引：[在所有节点都复制成功的日志索引，在大多数节点复制成功的日志索引]
             return new long[] {matchIndices[0], matchIndices[majorIndex]};
         }
+    }
+
+    /**
+     * 业务繁忙异常（当前队列消息积压过多时抛出）
+     */
+    class BusyLoopException extends Exception {
+
+        @Override
+        public Throwable fillInStackTrace() {
+            return this;
+        }
+
     }
 
     /**

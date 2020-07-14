@@ -60,7 +60,11 @@ public class RaftClient implements AutoCloseable {
      */
     public <R> Future<R> submit(Command<R> cmd) {
         Promise<R> promise = new Promise<>();
-        context.eventLoop().execute(() -> process(cmd, promise, context));
+        if (context.eventLoop().isBusy()) {
+            promise.completeExceptionally(new BusyLoopException());
+        } else {
+            context.eventLoop().execute(() -> process(cmd, promise, context));
+        }
         return promise;
     }
 

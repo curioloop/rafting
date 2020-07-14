@@ -60,23 +60,28 @@ public class NettyCluster implements RaftCluster, EventBus.EventDispatcher {
         EventID source = event.source();
         NettyNode node = remoteNodes.get(source.nodeID());
         if (node == null) {
-            logger.error("source node is not found: " + source.nodeID());
+            logger.error("Source({}) node not found", source);
             return;
         }
 
         try {
             String contextId = node.parseContextId(source.scope());
             RaftContext context = contextManager.getContext(contextId, true);
+            if (context.eventLoop().isBusy()) {
+                logger.error("Source({}) context is busy", source);
+                return;
+            }
+
             Callable invocation = node.prepareLocalInvocation(source.scope(), event.message(), context);
             context.eventLoop().execute(() -> {
                 try {
                     node.replyRequest(new PongEvent(source, invocation.call(), event.sequence()));
                 } catch (Exception e) {
-                    logger.error("fail to process request from: " + source, e);
+                    logger.error("Source({}) process request failed", source, e);
                 }
             });
         } catch (Exception e) {
-            logger.error("fail to dispatch request from: " + source, e);
+            logger.error("Source({}) dispatch request failed", source, e);
         }
     }
 
@@ -85,7 +90,7 @@ public class NettyCluster implements RaftCluster, EventBus.EventDispatcher {
         EventID source = event.source();
         NettyNode node = remoteNodes.get(source.nodeID());
         if (node == null) {
-            logger.error("source node is not found: " + source.nodeID());
+            logger.error("Source({}) node not found", source);
             return;
         }
         AsyncService.Invocation<RaftResponse> invocation =

@@ -59,12 +59,12 @@ public class EventBus extends Thread {
         public void channelInactive(ChannelHandlerContext ctx) throws Exception {
             if (ctx.channel().hasAttr(CHANNEL_ID)) {
                 NodeID nodeID = ctx.channel().attr(CHANNEL_ID).get();
-                if (nodes.remove(nodeID) == null) {
-                    logger.error("Node ID not found {}", nodeID);
+                if (nodes.compute(nodeID, (id, ch) -> ch == ctx.channel() ? null: ch) != null) {
+                    logger.warn("Node({}) channel not found", nodeID);
                 }
             }
             Attribute<String> name = ctx.channel().attr(CHANNEL_NAME);
-            logger.info("Node channel {} closed", name.get());
+            logger.info("Node({}) channel closed", name.get());
         }
     }
 
@@ -73,12 +73,13 @@ public class EventBus extends Thread {
         public void channelRead(ChannelHandlerContext ctx, Object msg) {
             Attribute<String> name = ctx.channel().attr(CHANNEL_NAME);
             if (msg instanceof ShakeHandEvent) {
+                ShakeHandEvent event = (ShakeHandEvent) msg;
                 try {
-                    String message = ((ShakeHandEvent) msg).message();
+                    String message = event.message();
                     name.set(message);
                     NodeID nodeID = NodeID.fromString(message);
-                    if (local.equals(nodeID) || nodes.containsKey(nodeID) ||
-                        nodes.computeIfAbsent(nodeID, k -> ctx.channel()) != ctx.channel()) {
+                    if (local.equals(nodeID) || ctx.channel() != nodes.compute(nodeID,
+                            (id, ch) -> ch == null || ! ch.isActive() ? ctx.channel(): ch)) {
                         throw new IllegalStateException("Duplicate connection " + nodeID);
                     }
                     ctx.channel().attr(CHANNEL_ID).set(nodeID);
@@ -90,7 +91,7 @@ public class EventBus extends Thread {
                             .addLast(new EventDispatchHandler(nodeID));
                     ctx.writeAndFlush(ShakeHandEvent.ok());
                 } catch (Exception e) {
-                    logger.error("Shake hand failed", e);
+                    logger.error("Node({}) shake hand failed", event.message(), e);
                     ctx.writeAndFlush(new ShakeHandEvent(e.getMessage()));
                     ctx.close();
                 }

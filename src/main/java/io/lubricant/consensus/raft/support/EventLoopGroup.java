@@ -37,7 +37,7 @@ public class EventLoopGroup {
                 if (isRunning) try {
                     task.run();
                 } catch (Throwable ex) {
-                    logger.error("Uncaught exception in event loop", ex);
+                    logger.error("Uncaught exception in EventLoop({})", getName(), ex);
                 }
             }
         }
@@ -45,6 +45,7 @@ public class EventLoopGroup {
         public void shutdown() {
             isRunning = false;
             interrupt();
+            logger.warn("EventLoop({}) discard remaining events {}", getName(), eventLoop.remainEvents());
         }
 
     }

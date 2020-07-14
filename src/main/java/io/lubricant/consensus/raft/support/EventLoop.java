@@ -2,6 +2,8 @@ package io.lubricant.consensus.raft.support;
 
 import java.util.concurrent.Executor;
 import java.util.concurrent.LinkedBlockingDeque;
+import java.util.concurrent.atomic.LongAdder;
+
 import io.lubricant.consensus.raft.support.EventLoopGroup.EventLoopExecutor;
 
 /**
@@ -9,9 +11,13 @@ import io.lubricant.consensus.raft.support.EventLoopGroup.EventLoopExecutor;
  */
 public class EventLoop implements Executor {
 
+    private final static int QUEUE_LIMIT = 500000;
+    private final static int QUEUE_BUSY_HINT = 1000;
+
+    private final LongAdder size = new LongAdder();
     private final EventLoopExecutor executor; // 每个事件循环绑定一个唯一的处理线程，保存线程安全
     private final LinkedBlockingDeque<Runnable> eventQueue // 线程队列，通过双端队列来提供任务优先级
-            = new LinkedBlockingDeque<>(1024 * 1024);
+            = new LinkedBlockingDeque<>(QUEUE_LIMIT);
 
     protected EventLoop(EventLoopExecutor executor) {
         this.executor = executor;
@@ -22,7 +28,9 @@ public class EventLoop implements Executor {
     }
 
     protected Runnable next() throws InterruptedException {
-        return eventQueue.take();
+        Runnable event = eventQueue.take();
+        size.decrement();
+        return event;
     }
 
     /**
@@ -39,6 +47,7 @@ public class EventLoop implements Executor {
                     eventQueue.addFirst(event);
                 else
                     eventQueue.addLast(event);
+                size.increment();
             }
         } else {
             throw new IllegalStateException("EventLoop is shutdown");
@@ -53,4 +62,19 @@ public class EventLoop implements Executor {
     public void execute(Runnable event) {
         execute(event, false);
     }
+
+    /**
+     * 队列是否繁忙
+     */
+    public boolean isBusy() {
+        return QUEUE_LIMIT - size.longValue() < QUEUE_BUSY_HINT;
+    }
+
+    /**
+     * 队列中的积压的事件数量
+     */
+    int remainEvents() {
+        return eventQueue.size();
+    }
+
 }

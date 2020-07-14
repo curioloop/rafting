@@ -115,7 +115,7 @@ public class Leader extends RaftMember implements Leadership {
         try {
             replicateLog(true);
         } catch (Exception e) {
-            logger.error("Send heartbeat failed {}", ctx.ctxID(), e);
+            logger.error("RaftCtx({}) send heartbeat failed", ctx.ctxID(), e);
         }
     }
 
@@ -128,7 +128,7 @@ public class Leader extends RaftMember implements Leadership {
             ctx.acceptCommand(currentTerm, command, promise);
             replicateLog(false);
         } catch (Exception e) {
-            logger.error("Accept command failed {}", ctx.ctxID(), e);
+            logger.error("RaftCtx({}) accept command failed", ctx.ctxID(), e);
         }
     }
 
@@ -152,6 +152,12 @@ public class Leader extends RaftMember implements Leadership {
             RaftService raftService = ctx.cluster().remoteService(id, ctx.ctxID());
             if (raftService != null) {
                 try {
+                    int requestLimit = IN_FLIGHT_LIMIT / (heartbeat ? 10: 1);
+                    if (state.requestInFlight > requestLimit) {
+                        logger.debug("ReplicateLog[{}] {} {} @{}", id, currentTerm, ctx.nodeID(), state.requestInFlight);
+                        continue;
+                    }
+
                     if (state.pendingInstallation) {
 
                         logger.debug("InstallSnapshot[{}] {} {} {} {}", id, currentTerm, ctx.nodeID(), epoch.index(), epoch.term());
@@ -223,7 +229,7 @@ public class Leader extends RaftMember implements Leadership {
                         }
                     });
                 } catch (Exception e) {
-                    logger.error("Invoke appendEntries failed {} {}", ctx.ctxID(), id, e);
+                    logger.error("RaftCtx({}) invoke appendEntries failed {}", ctx.ctxID(), id, e);
                 }
             } else {
                 state.statFailure(now, true, false); // service is not available
@@ -249,18 +255,18 @@ public class Leader extends RaftMember implements Leadership {
             if (commitIndex != 0 && commitIndex != ctx.replicatedLog().lastCommitted()) {
                 if (ctx.inEventLoop()) {
                     ctx.commitLog(commitIndex, false);
-                } else {
+                } else if (! ctx.eventLoop().isBusy()) {
                     ctx.eventLoop().execute(() -> {
                         try {
                             ctx.commitLog(commitIndex, false);
                         } catch (Exception e) {
-                            logger.error("Commit log failed {}", ctx.ctxID(), e);
+                            logger.error("RaftCtx({}) commit log failed", ctx.ctxID(), e);
                         }
                     });
                 }
             }
         } catch (Exception e) {
-            logger.error("Try commit failed {}", ctx.ctxID(), e);
+            logger.error("RaftCtx({}) try commit failed", ctx.ctxID(), e);
         }
     }
 

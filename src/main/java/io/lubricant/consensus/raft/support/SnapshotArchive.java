@@ -94,7 +94,7 @@ public class SnapshotArchive {
         }
 
         public boolean isSuccess() {
-            return task.isSuccess();
+            return ! isPending && task.isSuccess();
         }
 
         public boolean isPending() {

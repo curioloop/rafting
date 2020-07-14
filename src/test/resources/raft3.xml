@@ -6,7 +6,7 @@
         <local>raft://127.0.0.1:6003</local>
     </cluster>
     <timeout>
-        <tick>3000</tick>
+        <tick>300</tick>
         <heartbeat>1</heartbeat>
         <election>3</election>
         <broadcast>0.5</broadcast>

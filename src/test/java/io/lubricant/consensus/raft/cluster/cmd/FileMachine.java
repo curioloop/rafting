@@ -110,10 +110,23 @@ public class FileMachine implements RaftMachine {
             throw new IllegalArgumentException("invalid snapshot " + lastApplied + " " + checkpoint.lastIncludeIndex() );
         writer.close();
         try {
+            validate(checkpoint);
             Files.copy(checkpoint.path(), this.path, StandardCopyOption.REPLACE_EXISTING);
             lastApplied = checkpoint.lastIncludeIndex();
         } finally {
             writer = new BufferedWriter(new FileWriter(this.path.toFile(), true));
+        }
+    }
+
+    private void validate(Checkpoint checkpoint) throws IOException {
+        try (LineNumberReader a = new LineNumberReader(new FileReader(this.path.toFile()));
+             LineNumberReader b = new LineNumberReader(new FileReader(checkpoint.path().toFile()))) {
+            String lineA, lineB;
+            while ((lineA = a.readLine()) != null && (lineB = b.readLine()) != null) {
+                if (! lineA.equals(lineB)) {
+                    throw new IllegalStateException(String.format("snapshot has diff prefix: %s, %s", lineA, lineB));
+                }
+            }
         }
     }
 
