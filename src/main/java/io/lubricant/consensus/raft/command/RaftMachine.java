@@ -48,4 +48,10 @@ public interface RaftMachine extends AutoCloseable {
      * 原子性操作
      */
     void recover(Checkpoint checkpoint) throws Exception;
+
+    /**
+     * 清空数据
+     */
+    default void destroy() throws Exception {}
+
 }

@@ -125,4 +125,10 @@ public interface RaftLog extends AutoCloseable {
      * 单线程访问
      */
     Future<Boolean> flush(long index, long term) throws Exception;
+
+    /**
+     * 清空数据
+     */
+    default void destroy() throws Exception {}
+
 }

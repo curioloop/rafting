@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -51,17 +52,17 @@ public class ContextManager implements AutoCloseable  {
      * 创建上下文
      * @param contextId 上下文 ID
      */
-    private synchronized RaftContext createContext(String contextId) throws Exception {
+    public synchronized RaftContext createContext(String contextId) throws Exception {
         RaftContext context = contextMap.get(contextId);
         if (context != null) {
             return context;
         }
 
         logger.info("Start creating RaftContext({})", contextId);
-        StableLock lock = null;
-        SnapshotArchive snap = null;
         RaftLog raftLog = null;
         RaftMachine raftMachine = null;
+        StableLock lock = null;
+        SnapshotArchive snap;
         try {
             if (!Files.exists(config.lockerPath())) {
                 Files.createDirectories(config.lockerPath());
@@ -70,7 +71,7 @@ public class ContextManager implements AutoCloseable  {
                 Files.createDirectories(config.snapshotPath());
             }
             lock = new StableLock(config.lockerPath().resolve(contextId));
-            snap = new SnapshotArchive(config.snapshotPath(), contextId, 5);
+            snap = new SnapshotArchive(config.snapshotPath().resolve(contextId), 5);
             raftLog = stateLoader.restore(contextId, true);
             raftMachine = machineProvider.bootstrap(contextId, raftLog);
             RaftContext raftContext = new RaftContext(contextId, lock, snap, config, raftLog, raftMachine);
@@ -103,14 +104,45 @@ public class ContextManager implements AutoCloseable  {
     }
 
     /**
+     * 销毁上下文
+     * @param contextId 上下文 ID
+     */
+    public synchronized boolean destroyContext(String contextId) throws Exception {
+        RaftContext context = contextMap.remove(contextId);
+        if (context == null) return false;
+
+        logger.info("Start destroying RaftContext({})", contextId);
+        RaftLog raftLog = context.replicatedLog();
+        RaftMachine raftMachine = context.stateMachine();
+        context.destroy();
+        try {
+            Files.delete(config.lockerPath().resolve(contextId));
+        } catch (Exception e) {
+            logger.error("Destroy RaftContext({}) lock file failed", contextId, e);
+        }
+        try {
+            Iterator<Path> it = Files.list(config.snapshotPath().resolve(contextId)).iterator();
+            while (it.hasNext()) Files.deleteIfExists(it.next());
+            Files.delete(config.snapshotPath().resolve(contextId));
+        } catch (Exception e) {
+            logger.error("Destroy RaftContext({}) snap arch failed", contextId, e);
+        }
+        try { raftLog.destroy(); } catch (Exception e) {
+            logger.error("Destroy RaftContext({}) raft log failed", contextId, e);
+        }
+        try { raftMachine.destroy(); } catch (Exception e) {
+            logger.error("Destroy RaftContext({}) raft machine failed", contextId, e);
+        }
+        logger.info("Destroy RaftContext({}) finished", contextId);
+        return true;
+    }
+
+    /**
      * 获取上下文
      * @param contextId 上下文 ID
      */
-    public RaftContext getContext(String contextId, boolean create) throws Exception {
-        RaftContext context = contextMap.get(contextId);
-        if (context != null)
-            return context;
-        return createContext(contextId);
+    public RaftContext getContext(String contextId) throws Exception {
+        return contextMap.get(contextId);
     }
 
     @Override

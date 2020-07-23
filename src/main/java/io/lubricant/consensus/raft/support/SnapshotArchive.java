@@ -106,9 +106,9 @@ public class SnapshotArchive {
         }
     }
 
-    public SnapshotArchive(Path snapshotDir, String contextID, int limit) throws IOException {
+    public SnapshotArchive(Path snapshotDir, int limit) throws IOException {
         snapLimit = limit;
-        ctxSnapDir = Paths.get(snapshotDir.toString(), contextID);
+        ctxSnapDir = snapshotDir;
         if (! Files.exists(ctxSnapDir)) {
             Files.createDirectory(ctxSnapDir);
         }

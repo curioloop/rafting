@@ -66,7 +66,11 @@ public class NettyCluster implements RaftCluster, EventBus.EventDispatcher {
 
         try {
             String contextId = node.parseContextId(source.scope());
-            RaftContext context = contextManager.getContext(contextId, true);
+            RaftContext context = contextManager.getContext(contextId);
+            if (context == null) {
+                logger.error("RaftContext({}) of Source({}) context not found", contextId, source);
+                return;
+            }
             if (context.eventLoop().isBusy()) {
                 logger.error("Source({}) context is busy", source);
                 return;
@@ -104,7 +108,7 @@ public class NettyCluster implements RaftCluster, EventBus.EventDispatcher {
     public TransSnapEvent on(WaitSnapEvent event) {
         String contextName = event.context();
         try {
-            RaftContext context = contextManager.getContext(contextName, false);
+            RaftContext context = contextManager.getContext(contextName);
             if (context == null) {
                 throw new Exception("context not found");
             }

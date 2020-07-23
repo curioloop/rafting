@@ -35,7 +35,7 @@ public class SnapshotTest {
         } else {
             Files.createDirectory(dir);
         }
-        archive = new SnapshotArchive(Paths.get("/data0"), "snapshot-archive-test", 3);
+        archive = new SnapshotArchive(Paths.get("/data0").resolve("snapshot-archive-test"), 3);
         machine = new FileMachine(dir.resolve("machine").toString(), new RocksSerializer());
         machine.apply(1, new AppendCommand("1"));
         machine.apply(2, new AppendCommand("2"));

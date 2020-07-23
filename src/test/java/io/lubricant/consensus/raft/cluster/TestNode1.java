@@ -22,6 +22,7 @@ public class TestNode1 {
     public static void main(String[] args) throws Exception {
         RaftContainer container = new RaftContainer("raft1.xml");
         container.create(new FileBasedTestFactory());
+        container.createContext("root");
         RaftClient root = container.getClient("root");
         while (true) {
             try {

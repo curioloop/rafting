@@ -54,6 +54,21 @@ public class RaftContainer {
         logger.info("RaftContainer created successfully");
     }
 
+
+    public void createContext(String contextId) throws Exception {
+        if (!active) {
+            throw new IllegalStateException("Container closed");
+        }
+        manager.createContext(contextId);
+    }
+
+    public void destroyContext(String contextId) throws Exception {
+        if (!active) {
+            throw new IllegalStateException("Container closed");
+        }
+        manager.destroyContext(contextId);
+    }
+
     public RaftClient getClient(String contextId) throws Exception {
         RaftClient client = clientMap.get(contextId);
         if (client != null && client.refer()) {
@@ -61,7 +76,10 @@ public class RaftContainer {
         }
         if (active) synchronized (this) {
             if (active) {
-                RaftContext context = manager.getContext(contextId, true);
+                RaftContext context = manager.getContext(contextId);
+                if (context == null) {
+                    return null;
+                }
                 client = new RaftClient(context, clientMap);
                 clientMap.put(contextId, client);
             }

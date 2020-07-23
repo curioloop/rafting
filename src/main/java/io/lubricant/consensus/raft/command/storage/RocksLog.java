@@ -10,8 +10,12 @@ import org.slf4j.LoggerFactory;
 import java.io.Closeable;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Future;
@@ -40,6 +44,7 @@ public class RocksLog implements RaftLog, Closeable {
         }
     }
 
+    private Path path;
     private RocksDB db;
     private ColumnFamilyHandle epoch;
     private RocksSerializer serializer;
@@ -55,6 +60,7 @@ public class RocksLog implements RaftLog, Closeable {
                 setManualWalFlush(true);
         options.setLogger(new Logger(options));
 
+        this.path = Paths.get(path);
         List<ColumnFamilyHandle> handles = new ArrayList<>(2);
         this.db = RocksDB.open(options, path, Arrays.asList(
                 new ColumnFamilyDescriptor(EPOCH),
@@ -275,7 +281,28 @@ public class RocksLog implements RaftLog, Closeable {
 
     @Override
     public void close() throws IOException {
-        closed = true;
-        db.close();
+        if (!closed) {
+            closed = true;
+            db.close();
+        }
+    }
+
+    @Override
+    public void destroy() {
+        if (!closed) {
+            throw new IllegalStateException("open");
+        }
+        Path rocksPath = path;
+        if (rocksPath != null && Files.exists(path)) {
+            try {
+                Iterator<Path> it = Files.list(path).iterator();
+                while (it.hasNext()) Files.delete(it.next());
+                Files.delete(path);
+            } catch (IOException e) {
+                logger.error("Destroy RocksDB failed: {}", rocksPath, e);
+            }
+            path = null;
+        }
+        logger.info("Destroy RocksDB done: {}", rocksPath);
     }
 }
