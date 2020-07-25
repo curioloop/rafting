@@ -156,7 +156,7 @@ public class Follower extends RaftMember {
     public void onTimeout() {
         ctx.joinSnapshot();
         if (ctx.envConfig().preVote()) {
-            ctx.switchTo(Follower.class, currentTerm, ctx.nodeID());
+            ctx.switchTo(Follower.class, currentTerm, lastCandidate);
             RaftParticipant participant = ctx.participant();
             if (participant instanceof Follower && participant.currentTerm() == currentTerm) {
                 ((Follower) participant).prepareElection();

@@ -134,6 +134,7 @@ public class EventNode {
         private Channel channel;
         private RandomAccessFile raf;
         private FileChannel file;
+        private ChannelFuture future;
 
         public SnapChannel(WaitSnapEvent event) {
             this.event = event;
@@ -141,7 +142,7 @@ public class EventNode {
 
         @Override
         protected void perform() {
-            new Bootstrap().group(snapGroup).channel(NioSocketChannel.class)
+            future = new Bootstrap().group(snapGroup).channel(NioSocketChannel.class)
                     .option(ChannelOption.TCP_NODELAY, true)
                     .option(ChannelOption.SO_KEEPALIVE, true)
                     .handler(new ChannelInitializer<SocketChannel>() {
@@ -238,14 +239,26 @@ public class EventNode {
         @Override
         public boolean cancel(boolean mayInterruptIfRunning) {
             if (super.cancel(mayInterruptIfRunning)) {
-                channel.close().addListener(new GenericFutureListener<ChannelFuture>() {
-                    @Override
-                    public void operationComplete(ChannelFuture future) throws Exception {
-                        if (isOpen()) {
-                            close();
+                try {
+                    if (! future.isDone()) {
+                        logger.info("Cancel snap channel with {}", dst);
+                        if (! future.cancel(true)) {
+                            future.await();
+                            logger.info("Await snap channel with {}", dst);
                         }
                     }
-                });
+                } catch (InterruptedException ignore) {}
+
+                if (channel != null) {
+                    channel.close().addListener(new GenericFutureListener<ChannelFuture>() {
+                        @Override
+                        public void operationComplete(ChannelFuture future) throws Exception {
+                            if (isOpen()) {
+                                close();
+                            }
+                        }
+                    });
+                }
                 return true;
             }
             return false;
