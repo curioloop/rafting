@@ -28,6 +28,7 @@ public class RaftConfig {
 
     private final URI localURI;
     private final List<URI> remoteURIs;
+    private final boolean preVote;
     private final int tick;
     private final double heartbeat, election, broadcast;
     private final String logPath;
@@ -69,6 +70,11 @@ public class RaftConfig {
             List<String> remote = new ArrayList<>(remoteNodes.getLength());
             for (int i=0; i<remoteNodes.getLength(); i++) {
                 remote.add(remoteNodes.item(i).getTextContent());
+            }
+
+            boolean preVote = false;
+            if (((Number) xPath.evaluate("count(timeout/pre-vote)", config, XPathConstants.NUMBER)).intValue() == 1) {
+                preVote = (Boolean)xPath.evaluate("timeout/pre-vote", config, XPathConstants.BOOLEAN);
             }
 
             if (((Number) xPath.evaluate("count(timeout/tick)", config, XPathConstants.NUMBER)).intValue() != 1 ||
@@ -130,6 +136,7 @@ public class RaftConfig {
                 throw new IllegalArgumentException("scheme");
             }
 
+            this.preVote = preVote;
             this.tick = tick;
             this.heartbeat = heartbeat;
             this.election = election;
@@ -162,6 +169,10 @@ public class RaftConfig {
     public URI localURI() { return localURI; }
 
     public List<URI> remoteURIs() { return remoteURIs; }
+
+    public boolean preVote() {
+        return preVote;
+    }
 
     public int electionTimeout() {
         int electTimeout = (int) Math.round(election * tick);

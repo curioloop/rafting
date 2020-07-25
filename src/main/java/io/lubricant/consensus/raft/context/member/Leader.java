@@ -86,6 +86,11 @@ public class Leader extends RaftMember implements Leadership {
     }
 
     @Override
+    public RaftResponse preVote(long term, ID candidateId, long lastLogIndex, long lastLogTerm) throws Exception {
+        return RaftResponse.failure(currentTerm); // refuse grant vote event term greater than currentTerm
+    }
+
+    @Override
     public RaftResponse requestVote(long term, ID candidateId, long lastLogIndex, long lastLogTerm) throws Exception {
 
         assertEventLoop();

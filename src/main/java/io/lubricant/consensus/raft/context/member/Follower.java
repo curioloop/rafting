@@ -2,20 +2,26 @@ package io.lubricant.consensus.raft.context.member;
 
 import io.lubricant.consensus.raft.RaftParticipant;
 import io.lubricant.consensus.raft.RaftResponse;
+import io.lubricant.consensus.raft.RaftService;
 import io.lubricant.consensus.raft.command.RaftLog;
 import io.lubricant.consensus.raft.command.RaftLog.Entry;
 import io.lubricant.consensus.raft.context.RaftContext;
 import io.lubricant.consensus.raft.transport.RaftCluster.ID;
+import io.lubricant.consensus.raft.transport.rpc.Async;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class Follower extends RaftMember {
 
     private static final Logger logger = LoggerFactory.getLogger(Follower.class);
 
     private ID currentLeader; // 已知的最新 leader（用于重定向）
+
+    private boolean timeoutDetected = false;
+    private final Async.AsyncHead qualifier = Async.head();
 
     public Follower(RaftContext context, long term, ID candidate, Membership membership) {
         super(context, term, candidate, membership);
@@ -36,7 +42,7 @@ public class Follower extends RaftMember {
 
         ctx.resetTimer(this, true);
 
-        if (term > currentTerm) {
+        if (term > currentTerm || timeoutDetected) {
             ctx.switchTo(Follower.class, term, lastCandidate);
             return ctx.participant().appendEntries(term, leaderId, prevLogIndex, prevLogTerm, entries, leaderCommit);
         } else if (currentLeader != null && ! leaderId.equals(currentLeader)) {
@@ -82,6 +88,23 @@ public class Follower extends RaftMember {
     }
 
     @Override
+    public RaftResponse preVote(long term, ID candidateId, long lastLogIndex, long lastLogTerm) throws Exception {
+        assertEventLoop();
+
+        if (term <= currentTerm || ! timeoutDetected) {
+            return RaftResponse.failure(currentTerm);
+        }
+
+        ctx.resetTimer(this, true);
+        try {
+            return RaftResponse.reply(currentTerm,
+                    logUpToDate(lastLogIndex, lastLogTerm));
+        } finally {
+            ctx.resetTimer(this, false);
+        }
+    }
+
+    @Override
     public RaftResponse requestVote(long term, ID candidateId, long lastLogIndex, long lastLogTerm) throws Exception {
 
         assertEventLoop();
@@ -108,15 +131,19 @@ public class Follower extends RaftMember {
 
         assertEventLoop();
 
+        ctx.resetTimer(this, true);
+
         if (term < currentTerm) {
             return RaftResponse.failure(currentTerm);
         } else if (term > currentTerm) {
             throw new AssertionError("leader invoke InstallSnapshot before AppendEntries");
+        } else if (timeoutDetected) {
+            ctx.switchTo(Follower.class, currentTerm, lastCandidate);
+            return ctx.participant().installSnapshot(term, leaderId, lastIncludedIndex, lastIncludedTerm);
         }
 
         logger.debug("IS-Seen[{}]({}) {} {}", leaderId, term, lastIncludedIndex, lastIncludedTerm);
 
-        ctx.resetTimer(this, true);
         try {
             boolean success = ctx.installSnapshot(leaderId, lastIncludedIndex, lastIncludedTerm);
             return RaftResponse.reply(currentTerm, success);
@@ -128,10 +155,15 @@ public class Follower extends RaftMember {
     @Override
     public void onTimeout() {
         ctx.joinSnapshot();
-        ctx.switchTo(Candidate.class, currentTerm + 1, ctx.nodeID());
-        RaftParticipant participant = ctx.participant();
-        if (participant instanceof Candidate) {
-            ((Candidate) participant).startElection();
+        if (ctx.envConfig().preVote()) {
+            ctx.switchTo(Follower.class, currentTerm, ctx.nodeID());
+            RaftParticipant participant = ctx.participant();
+            if (participant instanceof Follower && participant.currentTerm() == currentTerm) {
+                ((Follower) participant).prepareElection();
+                onFencing();
+            }
+        } else {
+            ctx.switchTo(Candidate.class, currentTerm + 1, ctx.nodeID());
         }
     }
 
@@ -139,6 +171,7 @@ public class Follower extends RaftMember {
     public void onFencing() {
         assertEventLoop();
         ctx.joinSnapshot();
+        qualifier.abortRequests();
     }
 
     private boolean logContains(long index, long term) throws Exception {
@@ -187,4 +220,61 @@ public class Follower extends RaftMember {
         return entries;
     }
 
+    private void prepareElection() {
+
+        timeoutDetected = true;
+
+        long lastLogIndex;
+        long lastLogTerm;
+        try {
+            Entry last = ctx.replicatedLog().last();
+            if (last == null) {
+                last = ctx.replicatedLog().epoch();
+            }
+            lastLogIndex = last.index();
+            lastLogTerm = last.term();
+        } catch (Exception e) {
+            logger.error("Start pre-vote failed {} ", ctx.ctxID(), e);
+            return;
+        }
+
+        Async.AsyncHead head = qualifier;
+        if (head.isAborted()) {
+            return; // fenced by other event
+        }
+
+        final long nextTerm = currentTerm + 1;
+        int majority = ctx.majority();
+        long timeout = ctx.envConfig().broadcastTimeout();
+        AtomicInteger votes = new AtomicInteger(1); // PreVote for self
+        for (ID id: ctx.cluster().remoteIDs()) {
+            RaftService raftService = ctx.cluster().remoteService(id, ctx.ctxID());
+            if (raftService != null) {
+                try {
+
+                    logger.debug("PreVote[{}] {} {} {} {}", id, nextTerm, ctx.nodeID(), lastLogIndex, lastLogTerm);
+
+                    Async<RaftResponse> response = raftService.preVote(nextTerm, ctx.nodeID(), lastLogIndex, lastLogTerm);
+                    response.on(head, timeout, (result, error, canceled) -> {
+                        logger.debug("PV-Echo[{}] {} {} {} {}", id, nextTerm, result, error, canceled);
+                        if (! canceled &&  error == null && result != null) {
+                            if (result.term() > nextTerm) {
+                                head.abortRequests();
+                                ctx.trySwitchTo(Follower.class, result.term(), id);
+                            } else if (result.success()) {
+                                if (votes.incrementAndGet() >= majority) {
+                                    ctx.trySwitchTo(Candidate.class, nextTerm, ctx.nodeID());
+                                }
+                            }
+                        }
+                    });
+                } catch (Exception e) {
+                    logger.error("Invoke preVote failed {} {}", ctx.ctxID(), id, e);
+                }
+            }
+        }
+
+        // if not grant enough vote
+        // just wait for election timeout
+    }
 }

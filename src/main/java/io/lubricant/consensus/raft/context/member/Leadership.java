@@ -1,8 +1,5 @@
 package io.lubricant.consensus.raft.context.member;
 
-import io.lubricant.consensus.raft.RaftParticipant;
-import io.lubricant.consensus.raft.transport.RaftCluster.ID;
-
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;

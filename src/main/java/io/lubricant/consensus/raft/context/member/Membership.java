@@ -96,7 +96,7 @@ public class Membership {
                 return false; // just keep the leadership, don`t need to change
             }
             if (role == Follower.class) {
-                return false; // both convert to the same term follower，just ignore
+                return true; // both convert to the same term follower，may pre-vote fail
             }
         }
 

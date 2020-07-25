@@ -163,7 +163,7 @@ public class RaftRoutine implements AutoCloseable {
             expected = current; // trySwitch false, just apply the latest membership
         }
 
-        if (expected.isBetter(current)) {
+        if (expected != current && expected.isBetter(current)) {
             throw new AssertionError("no downgrade conversion allowed");
         }
 

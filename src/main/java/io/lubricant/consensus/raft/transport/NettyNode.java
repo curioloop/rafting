@@ -24,12 +24,15 @@ import java.util.concurrent.Callable;
 public class NettyNode extends AsyncService {
 
     private static final Method APPEND_ENTRY;
+    private static final Method PREPARE_VOTE;
     private static final Method REQUEST_VOTE;
     private static final Method INSTALL_SNAP;
     static {
         try {
             APPEND_ENTRY = RaftService.class.getDeclaredMethod("appendEntries",
                     long.class, ID.class, long.class, long.class, Entry[].class, long.class);
+            PREPARE_VOTE = RaftService.class.getDeclaredMethod("preVote",
+                    long.class, ID.class, long.class, long.class);
             REQUEST_VOTE = RaftService.class.getDeclaredMethod("requestVote",
                     long.class, ID.class, long.class, long.class);
             INSTALL_SNAP = RaftService.class.getDeclaredMethod("installSnapshot",
@@ -52,6 +55,13 @@ public class NettyNode extends AsyncService {
             String scope = APPEND_ENTRY.getName() + ':' + contextId;
             return invoke(scope, new Object[]{term, leaderId, prevLogIndex, prevLogTerm, entries, leaderCommit});
         }
+
+        @Override
+        public Async<RaftResponse> preVote(long term, ID candidateId, long lastLogIndex, long lastLogTerm) throws Exception {
+            String scope = PREPARE_VOTE.getName() + ':' + contextId;
+            return invoke(scope, new Object[]{term, candidateId, lastLogIndex, lastLogTerm});
+        }
+
         @Override
         public Async<RaftResponse> requestVote(long term, ID candidateId, long lastLogIndex, long lastLogTerm) throws Exception {
             String scope = REQUEST_VOTE.getName() + ':' + contextId;
@@ -84,6 +94,9 @@ public class NettyNode extends AsyncService {
         if (scope.startsWith(APPEND_ENTRY.getName())) {
             return scope.substring(APPEND_ENTRY.getName().length() + 1);
         }
+        if (scope.startsWith(PREPARE_VOTE.getName())) {
+            return scope.substring(PREPARE_VOTE.getName().length() + 1);
+        }
         if (scope.startsWith(REQUEST_VOTE.getName())) {
             return scope.substring(REQUEST_VOTE.getName().length() + 1);
         }
@@ -107,6 +120,17 @@ public class NettyNode extends AsyncService {
             Entry[] entries = (Entry[]) params[4];
             long leaderCommit = ((Number) params[5]).longValue();
             return () ->  context.participant().appendEntries(term, leaderId, prevLogIndex, prevLogTerm, entries, leaderCommit);
+        }
+        if (scope.startsWith(PREPARE_VOTE.getName())) {
+            Object[] params = (Object[]) data;
+            if (params.length != 4) {
+                throw new IllegalArgumentException("illegal argument size " + params.length);
+            }
+            long term = ((Number) params[0]).longValue();
+            ID candidateId = (ID) params[1];
+            long lastLogIndex = ((Number) params[2]).longValue();
+            long lastLogTerm = ((Number) params[3]).longValue();
+            return () ->  context.participant().preVote(term, candidateId, lastLogIndex, lastLogTerm);
         }
         if (scope.startsWith(REQUEST_VOTE.getName())) {
             Object[] params = (Object[]) data;

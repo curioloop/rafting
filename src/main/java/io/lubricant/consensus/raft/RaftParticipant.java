@@ -34,6 +34,11 @@ public interface RaftParticipant {
     RaftResponse appendEntries(long term, ID leaderId, long prevLogIndex, long prevLogTerm, Entry[] entries, long leaderCommit) throws Exception;
 
     /**
+     * @see RaftService#preVote(long, ID, long, long)
+     */
+    RaftResponse preVote(long term, ID candidateId, long lastLogIndex, long lastLogTerm) throws Exception;
+
+    /**
      * @see RaftService#requestVote(long, ID, long, long)
      */
     RaftResponse requestVote(long term, ID candidateId, long lastLogIndex, long lastLogTerm) throws Exception;

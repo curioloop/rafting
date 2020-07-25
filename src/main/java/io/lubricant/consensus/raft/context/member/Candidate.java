@@ -21,6 +21,7 @@ public class Candidate extends RaftMember {
 
     public Candidate(RaftContext context, long term, ID candidate, Membership membership) {
         super(context, term, candidate, membership);
+        startElection();
     }
 
     @Override
@@ -37,6 +38,11 @@ public class Candidate extends RaftMember {
         // term >= currentTerm means another candidate win the election in the same/later term
         ctx.switchTo(Follower.class, term, lastCandidate);
         return ctx.participant().appendEntries(term, leaderId, prevLogIndex, prevLogTerm, entries, leaderCommit);
+    }
+
+    @Override
+    public RaftResponse preVote(long term, ID candidateId, long lastLogIndex, long lastLogTerm) throws Exception {
+        return requestVote(term, candidateId, lastLogIndex, lastLogTerm);
     }
 
     @Override
@@ -77,7 +83,6 @@ public class Candidate extends RaftMember {
         ctx.switchTo(Candidate.class, currentTerm + 1, ctx.nodeID());
         RaftParticipant participant = ctx.participant();
         if (participant instanceof Candidate) {
-            ((Candidate) participant).startElection();
             onFencing(); // cancel previous requestVote
         }
     }
