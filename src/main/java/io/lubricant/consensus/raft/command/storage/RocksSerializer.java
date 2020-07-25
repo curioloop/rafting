@@ -9,6 +9,7 @@ public class RocksSerializer implements CmdSerializer {
 
     @Override
     public Command deserialize(Entry entry) throws SerializeException {
+        if (entry == null) return null;
         if (entry instanceof RocksEntry) {
             return RocksLog.entryToCmd((RocksEntry) entry);
         }

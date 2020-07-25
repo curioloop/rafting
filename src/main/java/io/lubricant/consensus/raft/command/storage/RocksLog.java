@@ -44,28 +44,30 @@ public class RocksLog implements RaftLog, Closeable {
         }
     }
 
-    private Path path;
-    private RocksDB db;
+    Path path;
+    RocksDB db;
     private ColumnFamilyHandle epoch;
+    private RocksStateLoader parent;
     private RocksSerializer serializer;
     private volatile long commitIndex;
     private volatile Entry epochEntry;
     private volatile Entry lastEntry;
     private volatile boolean closed;
 
-    public RocksLog(String path, RocksSerializer serializer) throws Exception {
+    public RocksLog(String path,  RocksStateLoader parent, RocksSerializer serializer) throws Exception {
         DBOptions options = new DBOptions().
                 setCreateIfMissing(true).
                 setCreateMissingColumnFamilies(true).
                 setManualWalFlush(true);
         options.setLogger(new Logger(options));
 
+        this.parent = parent;
+        this.serializer = serializer;
         this.path = Paths.get(path);
         List<ColumnFamilyHandle> handles = new ArrayList<>(2);
         this.db = RocksDB.open(options, path, Arrays.asList(
                 new ColumnFamilyDescriptor(EPOCH),
                 new ColumnFamilyDescriptor(DEFAULT)), handles);
-        this.serializer = serializer;
         this.lastEntry = lastEntry();
 
         this.epoch = handles.get(0);
@@ -280,29 +282,25 @@ public class RocksLog implements RaftLog, Closeable {
     }
 
     @Override
-    public void close() throws IOException {
-        if (!closed) {
+    public synchronized void close() throws IOException {
+        if (! closed) {
+            parent.close(this);
             closed = true;
-            db.close();
         }
     }
 
     @Override
-    public void destroy() {
+    public synchronized void destroy() {
         if (!closed) {
             throw new IllegalStateException("open");
         }
-        Path rocksPath = path;
-        if (rocksPath != null && Files.exists(path)) {
+        if (path != null) {
             try {
-                Iterator<Path> it = Files.list(path).iterator();
-                while (it.hasNext()) Files.delete(it.next());
-                Files.delete(path);
+                parent.destroy(this);
             } catch (IOException e) {
-                logger.error("Destroy RocksDB failed: {}", rocksPath, e);
+                logger.error("Destroy RocksDB failed: {}", path, e);
             }
-            path = null;
+            logger.info("Destroy RocksDB done: {}", path);
         }
-        logger.info("Destroy RocksDB done: {}", rocksPath);
     }
 }
