@@ -1,6 +1,8 @@
 package io.lubricant.consensus.raft.support;
 
 
+import io.lubricant.consensus.raft.support.anomaly.TimeoutException;
+
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledFuture;
 
@@ -10,13 +12,22 @@ import java.util.concurrent.ScheduledFuture;
 @SuppressWarnings("all")
 public class Promise<V> extends CompletableFuture<V> {
 
+    private volatile boolean expired;
     private volatile ScheduledFuture timeout;
 
     public void timeout(long timeout, TimeLimited onTimeout) {
-        this.timeout = TimeLimited.newTimer(timeout).schedule(() -> {
-            this.timeout = null; // reduce footprint
-            onTimeout.timeout();
-        });
+        if (! isDone()) {
+            this.timeout = TimeLimited.newTimer(timeout).schedule(() -> {
+                this.timeout = null; // reduce footprint
+                if (super.completeExceptionally(new TimeoutException())) {
+                    expired = true;
+                    onTimeout.timeout();
+                }
+            });
+        }
+        if (isDone() && this.timeout != null) {
+            cancelTimeout();
+        }
     }
 
     @Override
@@ -27,6 +38,10 @@ public class Promise<V> extends CompletableFuture<V> {
     @Override
     public boolean completeExceptionally(Throwable ex) {
         return super.completeExceptionally(ex) && cancelTimeout();
+    }
+
+    public boolean isExpired() {
+        return expired;
     }
 
     private boolean cancelTimeout() {

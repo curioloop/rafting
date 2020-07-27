@@ -13,9 +13,9 @@ import java.util.Map;
 import java.util.concurrent.*;
 
 /**
- * 客户端（用户交互界面）
+ * 服务存根（用户交互界面）
  */
-public class RaftClient implements AutoCloseable {
+public class RaftStub implements AutoCloseable {
 
     /**
      * 用户指令
@@ -23,7 +23,7 @@ public class RaftClient implements AutoCloseable {
     public interface Command<R> extends Serializable {}
 
     private RaftContext context;
-    private Map<String, RaftClient> parent;
+    private Map<String, RaftStub> parent;
     private volatile long refCount = 1;
 
     /**
@@ -31,7 +31,7 @@ public class RaftClient implements AutoCloseable {
      * @param context 上下文
      * @param parent 客户端池
      */
-    public RaftClient(RaftContext context, Map<String, RaftClient> parent) {
+    public RaftStub(RaftContext context, Map<String, RaftStub> parent) {
         this.context = context;
         this.parent = parent;
     }
@@ -60,7 +60,7 @@ public class RaftClient implements AutoCloseable {
      * @param cmd 用户命令
      * @return 异步调用结果
      */
-    public <R> Future<R> submit(Command<R> cmd) {
+    public <R> Promise<R> submit(Command<R> cmd) {
         Promise<R> promise = new Promise<>();
         if (context.eventLoop().isBusy()) {
             promise.completeExceptionally(new BusyLoopException());

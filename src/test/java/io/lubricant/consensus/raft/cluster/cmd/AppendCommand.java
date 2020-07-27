@@ -1,6 +1,6 @@
 package io.lubricant.consensus.raft.cluster.cmd;
 
-import io.lubricant.consensus.raft.command.RaftClient.Command;
+import io.lubricant.consensus.raft.command.RaftStub.Command;
 
 public class AppendCommand implements Command<Boolean> {
 

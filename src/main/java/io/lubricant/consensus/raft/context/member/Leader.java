@@ -2,7 +2,7 @@ package io.lubricant.consensus.raft.context.member;
 
 import io.lubricant.consensus.raft.RaftResponse;
 import io.lubricant.consensus.raft.RaftService;
-import io.lubricant.consensus.raft.command.RaftClient.Command;
+import io.lubricant.consensus.raft.command.RaftStub.Command;
 import io.lubricant.consensus.raft.command.RaftLog.Entry;
 import io.lubricant.consensus.raft.context.RaftContext;
 import io.lubricant.consensus.raft.support.Promise;

@@ -1,6 +1,6 @@
 package io.lubricant.consensus.raft;
 
-import io.lubricant.consensus.raft.command.RaftClient;
+import io.lubricant.consensus.raft.command.RaftStub;
 import io.lubricant.consensus.raft.context.ContextManager;
 import io.lubricant.consensus.raft.context.RaftContext;
 import io.lubricant.consensus.raft.support.RaftConfig;
@@ -29,11 +29,11 @@ public class RaftContainer {
     private ContextManager manager;
     private RaftCluster cluster;
 
-    private Map<String, RaftClient> clientMap;
+    private Map<String, RaftStub> stubMap;
 
     public RaftContainer(String configPath) throws Exception {
         config = new RaftConfig(configPath, true);
-        clientMap = new ConcurrentHashMap<>();
+        stubMap = new ConcurrentHashMap<>();
     }
 
     public synchronized void create(RaftFactory factory) throws Exception {
@@ -69,10 +69,10 @@ public class RaftContainer {
         manager.destroyContext(contextId);
     }
 
-    public RaftClient getClient(String contextId) throws Exception {
-        RaftClient client = clientMap.get(contextId);
-        if (client != null && client.refer()) {
-            return client;
+    public RaftStub getStub(String contextId) throws Exception {
+        RaftStub stub = stubMap.get(contextId);
+        if (stub != null && stub.refer()) {
+            return stub;
         }
         if (active) synchronized (this) {
             if (active) {
@@ -80,11 +80,11 @@ public class RaftContainer {
                 if (context == null) {
                     return null;
                 }
-                client = new RaftClient(context, clientMap);
-                clientMap.put(contextId, client);
+                stub = new RaftStub(context, stubMap);
+                stubMap.put(contextId, stub);
             }
         }
-        return client;
+        return stub;
     }
 
     public synchronized void destroy() {
@@ -95,7 +95,7 @@ public class RaftContainer {
 
         logger.info("Start destroying RaftContainer");
 
-        clientMap.clear();
+        stubMap.clear();
 
         if (cluster != null) {
             try { cluster.close(); }

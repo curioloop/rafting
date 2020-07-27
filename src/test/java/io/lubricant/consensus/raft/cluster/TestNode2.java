@@ -3,7 +3,7 @@ package io.lubricant.consensus.raft.cluster;
 import io.lubricant.consensus.raft.RaftContainer;
 import io.lubricant.consensus.raft.cluster.cmd.AppendCommand;
 import io.lubricant.consensus.raft.cluster.cmd.FileBasedTestFactory;
-import io.lubricant.consensus.raft.command.RaftClient;
+import io.lubricant.consensus.raft.command.RaftStub;
 import io.lubricant.consensus.raft.support.anomaly.NotLeaderException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,7 +23,7 @@ public class TestNode2 {
         RaftContainer container = new RaftContainer("raft2.xml");
         container.create(new FileBasedTestFactory());
         container.createContext("root");
-        RaftClient root = container.getClient("root");
+        RaftStub root = container.getStub("root");
         while (true) {
             try {
                 int rand = ThreadLocalRandom.current().nextInt(1000);

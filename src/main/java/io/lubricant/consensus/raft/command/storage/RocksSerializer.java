@@ -1,7 +1,7 @@
 package io.lubricant.consensus.raft.command.storage;
 
 import io.lubricant.consensus.raft.support.serial.CmdSerializer;
-import io.lubricant.consensus.raft.command.RaftClient.Command;
+import io.lubricant.consensus.raft.command.RaftStub.Command;
 import io.lubricant.consensus.raft.command.RaftLog.Entry;
 import io.lubricant.consensus.raft.support.anomaly.SerializeException;
 

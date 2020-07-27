@@ -1,7 +1,7 @@
 package io.lubricant.consensus.raft.context;
 
 import io.lubricant.consensus.raft.command.MaintainAgreement;
-import io.lubricant.consensus.raft.command.RaftClient.Command;
+import io.lubricant.consensus.raft.command.RaftStub.Command;
 import io.lubricant.consensus.raft.context.member.Follower;
 import io.lubricant.consensus.raft.context.member.Membership;
 import io.lubricant.consensus.raft.context.member.TimerTicket;
@@ -192,12 +192,7 @@ public class RaftContext {
         Entry entry = replicatedLog().newEntry(currentTerm, command);
         EntryKey key = new EntryKey(entry);
         commandPromises.put(key, promise);
-        promise.timeout(envConfig().broadcastTimeout(), () -> {
-            Promise p = commandPromises.remove(key);
-            if (p != null) {
-                p.completeExceptionally(new TimeoutException());
-            }
-        });
+        promise.timeout(envConfig().broadcastTimeout(), () -> commandPromises.remove(key));
     }
 
     /**

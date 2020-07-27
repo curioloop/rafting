@@ -1,6 +1,6 @@
 package io.lubricant.consensus.raft.cluster.cmd;
 
-import io.lubricant.consensus.raft.command.RaftClient;
+import io.lubricant.consensus.raft.command.RaftStub;
 import io.lubricant.consensus.raft.command.RaftLog;
 import io.lubricant.consensus.raft.command.RaftMachine;
 import io.lubricant.consensus.raft.support.serial.CmdSerializer;
@@ -55,11 +55,11 @@ public class FileMachine implements RaftMachine {
     @Override
     public Object apply(RaftLog.Entry entry) throws Exception {
         if (closed) throw new IllegalStateException("closed");
-        RaftClient.Command command = serializer.deserialize(entry);
+        RaftStub.Command command = serializer.deserialize(entry);
         return apply(entry.index(), command);
     }
 
-    public synchronized boolean apply(long index, RaftClient.Command command) throws IOException {
+    public synchronized boolean apply(long index, RaftStub.Command command) throws IOException {
 
         if (index <= lastApplied) {
             throw new AssertionError(String.format("log entry is already applied %d <= %d", index, lastApplied));

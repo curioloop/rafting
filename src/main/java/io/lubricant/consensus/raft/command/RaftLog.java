@@ -3,7 +3,7 @@ package io.lubricant.consensus.raft.command;
 import java.io.Serializable;
 import java.util.concurrent.Future;
 
-import io.lubricant.consensus.raft.command.RaftClient.Command;
+import io.lubricant.consensus.raft.command.RaftStub.Command;
 
 /**
  * 复制日志
