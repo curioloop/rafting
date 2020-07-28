@@ -1,10 +1,9 @@
 package io.lubricant.consensus.raft.support;
 
-
-import io.lubricant.consensus.raft.support.anomaly.TimeoutException;
-
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeoutException;
 
 /**
  * 异步回调通知（消除异步请求的线程阻塞）
@@ -12,22 +11,27 @@ import java.util.concurrent.ScheduledFuture;
 @SuppressWarnings("all")
 public class Promise<V> extends CompletableFuture<V> {
 
-    private volatile boolean expired;
-    private volatile ScheduledFuture timeout;
+    private static class ExceptionWrapper extends CompletionException {
+        private ExceptionWrapper(Throwable ex) { super(ex); }
+        @Override
+        public Throwable fillInStackTrace() {
+            return this;
+        }
+    }
 
-    public void timeout(long timeout, TimeLimited onTimeout) {
-        if (! isDone()) {
-            this.timeout = TimeLimited.newTimer(timeout).schedule(() -> {
-                this.timeout = null; // reduce footprint
-                if (super.completeExceptionally(new TimeoutException())) {
-                    expired = true;
-                    onTimeout.timeout();
-                }
-            });
-        }
-        if (isDone() && this.timeout != null) {
-            cancelTimeout();
-        }
+    private static ExceptionWrapper TIMEOUT = new ExceptionWrapper(new TimeoutException());
+
+    private final ScheduledFuture timeout;
+
+    public Promise() { timeout = null; }
+
+    public Promise(long timeout) {
+        this.timeout = TimeLimited.newTimer(timeout)
+                .schedule(() -> super.completeExceptionally(TIMEOUT));
+    }
+
+    public CompletableFuture<V> whenTimeout(TimeLimited action) {
+        return whenComplete((v, e) -> { if (isExpired()) action.timeout(); });
     }
 
     @Override
@@ -37,11 +41,15 @@ public class Promise<V> extends CompletableFuture<V> {
 
     @Override
     public boolean completeExceptionally(Throwable ex) {
-        return super.completeExceptionally(ex) && cancelTimeout();
+        return super.completeExceptionally(new ExceptionWrapper(ex)) && cancelTimeout();
     }
 
     public boolean isExpired() {
-        return expired;
+        if (isCompletedExceptionally()) {
+            try { getNow(null); }
+            catch (Exception e) { return e == TIMEOUT; }
+        }
+        return false;
     }
 
     private boolean cancelTimeout() {
@@ -51,5 +59,4 @@ public class Promise<V> extends CompletableFuture<V> {
         }
         return true;
     }
-
 }

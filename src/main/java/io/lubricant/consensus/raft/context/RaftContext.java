@@ -192,7 +192,7 @@ public class RaftContext {
         Entry entry = replicatedLog().newEntry(currentTerm, command);
         EntryKey key = new EntryKey(entry);
         commandPromises.put(key, promise);
-        promise.timeout(envConfig().broadcastTimeout(), () -> commandPromises.remove(key));
+        promise.whenTimeout(() -> commandPromises.remove(key));
     }
 
     /**

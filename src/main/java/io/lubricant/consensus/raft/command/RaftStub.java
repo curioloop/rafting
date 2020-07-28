@@ -61,7 +61,7 @@ public class RaftStub implements AutoCloseable {
      * @return 异步调用结果
      */
     public <R> Promise<R> submit(Command<R> cmd) {
-        Promise<R> promise = new Promise<>();
+        Promise<R> promise = new Promise<>(context.envConfig().broadcastTimeout());
         if (context.eventLoop().isBusy()) {
             promise.completeExceptionally(new BusyLoopException());
         } else {
