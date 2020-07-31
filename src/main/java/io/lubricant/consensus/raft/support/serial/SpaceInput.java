@@ -3,14 +3,25 @@ package io.lubricant.consensus.raft.support.serial;
 import com.esotericsoftware.kryo.io.Input;
 import io.netty.buffer.ByteBuf;
 
+import java.io.DataInput;
+import java.io.IOException;
 import java.io.InputStream;
 
 public class SpaceInput extends InputStream {
 
     private Input in = new Input(2048);
     private ByteBuf space;
-    private int length;
-    private int position;
+    private DataInput data;
+    private long length;
+    private long position;
+
+    public Input wrap(DataInput data, long len) {
+        in.setInputStream(this);
+        this.data = data;
+        this.length = len;
+        this.position = 0;
+        return in;
+    }
 
     public Input wrap(ByteBuf space, int len) {
         in.setInputStream(this);
@@ -21,6 +32,7 @@ public class SpaceInput extends InputStream {
     }
 
     public void clear() {
+        this.data = null;
         this.space = null;
         this.length = 0;
     }
@@ -40,12 +52,19 @@ public class SpaceInput extends InputStream {
             return 0;
         }
 
-        int pos = position;
-        int end = Math.min(pos + len, length);
+        long pos = position;
+        long end = Math.min(pos + len, length);
         if (end == pos) {
             return -1;
         }
-        space.readBytes(buf, off, end - pos);
-        return (position = end) - pos;
+
+        if (space != null) {
+            space.readBytes(buf, off, (int)(end - pos));
+        } else try {
+            data.readFully(buf, off, (int)(end - pos));
+        } catch (IOException e) {
+            throw new IllegalStateException(e);
+        }
+        return (int) ((position = end) - pos);
     }
 }

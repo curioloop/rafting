@@ -9,6 +9,8 @@ import io.netty.buffer.ByteBuf;
 import org.objenesis.strategy.StdInstantiatorStrategy;
 
 import java.io.ByteArrayOutputStream;
+import java.io.DataInput;
+import java.io.DataOutput;
 
 
 /**
@@ -127,5 +129,46 @@ public class Serialization {
             input.clear();
         }
     }
+
+    /**
+     * 序列化对象并写入 DataOutput
+     * @param msg 消息对象
+     * @param data 数据
+     */
+    public static void writeObject(Object msg, DataOutput data) throws SerializeException {
+        Kryo kryo = KRYO_POOL.borrow();
+        SpaceOutput output = OUTPUT.get();
+        try {
+            Output out = output.wrap(data);
+            kryo.writeClassAndObject(out, msg);
+            out.flush();
+        } catch (Exception ex) {
+            throw new SerializeException(ex);
+        } finally {
+            KRYO_POOL.release(kryo);
+            output.clear();
+        }
+    }
+
+    /**
+     * 反序列化 DataInput 中的数据
+     * @param data 数据
+     * @param len 数据长度
+     */
+    @SuppressWarnings("unchecked")
+    public static <T> T readObject(DataInput data, long len) throws SerializeException {
+        Kryo kryo = KRYO_POOL.borrow();
+        SpaceInput input = INPUT.get();
+        try {
+            Input in = input.wrap(data, len);
+            return (T) kryo.readClassAndObject(in);
+        } catch (Exception ex) {
+            throw new SerializeException(ex);
+        } finally {
+            KRYO_POOL.release(kryo);
+            input.clear();
+        }
+    }
+
 
 }

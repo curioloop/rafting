@@ -19,7 +19,7 @@ public class Promise<V> extends CompletableFuture<V> {
         }
     }
 
-    private static ExceptionWrapper TIMEOUT = new ExceptionWrapper(new TimeoutException());
+    private static final ExceptionWrapper TIMEOUT = new ExceptionWrapper(new TimeoutException());
 
     private final ScheduledFuture timeout;
 
@@ -31,7 +31,7 @@ public class Promise<V> extends CompletableFuture<V> {
     }
 
     public CompletableFuture<V> whenTimeout(TimeLimited action) {
-        return whenComplete((v, e) -> { if (isExpired()) action.timeout(); });
+        return exceptionally(e -> {if (e == TIMEOUT) action.timeout(); return null;} );
     }
 
     @Override

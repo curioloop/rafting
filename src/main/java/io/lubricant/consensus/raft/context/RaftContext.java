@@ -21,7 +21,6 @@ import org.slf4j.LoggerFactory;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -52,6 +51,8 @@ public class RaftContext {
 
     final MaintainAgreement maintainAgreement;
     PendingTask<Void> snapshotInstallation;
+
+    volatile boolean stillRunning = true;
 
     public RaftContext(String id, StableLock lock, SnapshotArchive snap, RaftConfig config, RaftLog log, RaftMachine machine) throws Exception {
         this.id = id;
@@ -101,12 +102,21 @@ public class RaftContext {
             } catch (Exception e) {
                 logger.error("RaftCtx({}) initialize failed", id);
                 promise.completeExceptionally(e);
+                close(false);
             }
         }, true);
         return promise;
     }
 
-    public void destroy() {
+    public synchronized void close(boolean gracefully) {
+        if (stillRunning) {
+            stillRunning = false;
+        } else return;
+
+        if (gracefully) {
+            // TODO
+        }
+
         try {
             stateMachine.close();
         } catch (Exception e) {
@@ -169,6 +179,7 @@ public class RaftContext {
      * @param ballot 选票
      */
     public void trySwitchTo(Class<? extends RaftParticipant> role, long term, ID ballot) {
+        if (! stillRunning) return;
         Membership membership = routine.trySwitch(this, role, term, ballot);
         if (membership != null) {
             if (inEventLoop()) {
@@ -185,14 +196,20 @@ public class RaftContext {
      * @param command 用户命令
      * @param promise 异步通知
      */
-    public void acceptCommand(long currentTerm, Command command, Promise promise) throws Exception {
+    public boolean acceptCommand(long currentTerm, Command command, Promise promise) throws Exception {
         if (! inEventLoop()) {
             throw new AssertionError("accept command should be triggered in event loop");
         }
-        Entry entry = replicatedLog().newEntry(currentTerm, command);
-        EntryKey key = new EntryKey(entry);
-        commandPromises.put(key, promise);
-        promise.whenTimeout(() -> commandPromises.remove(key));
+        if (stillRunning) {
+            Entry entry = replicatedLog().newEntry(currentTerm, command);
+            EntryKey key = new EntryKey(entry);
+            commandPromises.put(key, promise);
+            promise.whenTimeout(() -> commandPromises.remove(key));
+            return true;
+        } else {
+            promise.completeExceptionally(new IllegalStateException("stop"));
+            return false;
+        }
     }
 
     /**
@@ -204,6 +221,7 @@ public class RaftContext {
         if (! inEventLoop()) {
             throw new AssertionError("commit log should be triggered in event loop");
         }
+        if (! stillRunning) return;
         if (replicatedLog().markCommitted(commitIndex) ||
                 passiveCommit && replicatedLog().lastCommitted() > stateMachine().lastApplied()) {
             // warning: remove the promise once the command is applied
@@ -229,7 +247,7 @@ public class RaftContext {
         if (! inEventLoop()) {
             throw new AssertionError("install snapshot should be performed in event loop");
         }
-        return routine.installSnapshot(this, lastIncludedIndex, lastIncludedTerm, () -> {
+        return stillRunning && routine.installSnapshot(this, lastIncludedIndex, lastIncludedTerm, () -> {
             SnapService snapService = cluster().remoteService(leaderId, ctxID());
             return snapService.obtainSnapshot(lastIncludedIndex, lastIncludedTerm);
         });

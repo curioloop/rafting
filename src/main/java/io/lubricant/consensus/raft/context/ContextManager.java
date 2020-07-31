@@ -114,7 +114,7 @@ public class ContextManager implements AutoCloseable  {
         logger.info("Start destroying RaftContext({})", contextId);
         RaftLog raftLog = context.replicatedLog();
         RaftMachine raftMachine = context.stateMachine();
-        context.destroy();
+        context.close(false);
         try {
             Files.delete(config.lockerPath().resolve(contextId));
         } catch (Exception e) {
@@ -152,7 +152,7 @@ public class ContextManager implements AutoCloseable  {
         Iterator<Map.Entry<String, RaftContext>> contextIt = contextMap.entrySet().iterator();
         while (contextIt.hasNext()) {
             RaftContext context = contextIt.next().getValue();
-            context.destroy();
+            context.close(true);
             contextIt.remove();
         }
     }

@@ -131,8 +131,9 @@ public class Leader extends RaftMember implements Leadership {
                 promise.completeExceptionally(new NotLeaderException(ctx.participant()));
                 return;
             }
-            ctx.acceptCommand(currentTerm, command, promise);
-            replicateLog(false);
+            if (ctx.acceptCommand(currentTerm, command, promise)) {
+                replicateLog(false);
+            }
         } catch (Exception e) {
             logger.error("RaftCtx({}) accept command failed", ctx.ctxID(), e);
         }
