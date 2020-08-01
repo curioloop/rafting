@@ -1,5 +1,7 @@
 package io.lubricant.consensus.raft.support;
 
+import io.lubricant.consensus.raft.context.RaftContext;
+import io.lubricant.consensus.raft.support.EventLoop.ContextEventLoop;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -17,6 +19,7 @@ public class EventLoopGroup {
      */
     protected static class EventLoopExecutor extends Thread {
 
+        protected volatile boolean isWorking = true;
         protected volatile boolean isRunning = true;
         private final EventLoop eventLoop = new EventLoop(this);
 
@@ -42,7 +45,12 @@ public class EventLoopGroup {
             }
         }
 
-        public void shutdown() {
+        public void shutdown(boolean blockade) {
+            if (blockade) {
+                isWorking = false;
+                logger.warn("EventLoop({}) stop accepting new events", getName());
+                return;
+            }
             isRunning = false;
             interrupt();
             logger.warn("EventLoop({}) discard remaining events {}", getName(), eventLoop.remainEvents());
@@ -66,9 +74,9 @@ public class EventLoopGroup {
         }
     }
 
-    public EventLoop next() {
+    public ContextEventLoop next(RaftContext context) {
         int nextExecutor = counter.getAndIncrement() % executors.length;
-        return executors[nextExecutor].eventLoop;
+        return executors[nextExecutor].eventLoop.bind(context);
     }
 
     public synchronized void start() {
@@ -77,9 +85,9 @@ public class EventLoopGroup {
         }
     }
 
-    public synchronized void shutdown() {
+    public synchronized void shutdown(boolean blockade) {
         for (EventLoopExecutor executor : executors) {
-            executor.shutdown();
+            executor.shutdown(blockade);
         }
     }
 }

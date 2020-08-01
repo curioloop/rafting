@@ -3,7 +3,7 @@ package io.lubricant.consensus.raft.context;
 import io.lubricant.consensus.raft.command.*;
 import io.lubricant.consensus.raft.support.EventLoopGroup;
 import io.lubricant.consensus.raft.support.RaftConfig;
-import io.lubricant.consensus.raft.support.SnapshotArchive;
+import io.lubricant.consensus.raft.command.SnapshotArchive;
 import io.lubricant.consensus.raft.support.StableLock;
 import io.lubricant.consensus.raft.command.spi.MachineProvider;
 import io.lubricant.consensus.raft.command.spi.StateLoader;
@@ -75,7 +75,7 @@ public class ContextManager implements AutoCloseable  {
             raftLog = stateLoader.restore(contextId, true);
             raftMachine = machineProvider.bootstrap(contextId, raftLog);
             RaftContext raftContext = new RaftContext(contextId, lock, snap, config, raftLog, raftMachine);
-            raftContext.initialize(cluster, routine, eventLoops.next()).get(); // block till initialization finished
+            raftContext.initialize(cluster, routine, eventLoops.next(raftContext)).get(); // block till initialization finished
             context = raftContext;
         } catch (Exception ex) {
             if (raftMachine != null) {
@@ -147,14 +147,15 @@ public class ContextManager implements AutoCloseable  {
 
     @Override
     public synchronized void close() throws Exception {
-        eventLoops.shutdown();
-        routine.close();
+        eventLoops.shutdown(true);
         Iterator<Map.Entry<String, RaftContext>> contextIt = contextMap.entrySet().iterator();
         while (contextIt.hasNext()) {
             RaftContext context = contextIt.next().getValue();
             context.close(true);
             contextIt.remove();
         }
+        eventLoops.shutdown(false);
+        routine.close();
     }
 
 }

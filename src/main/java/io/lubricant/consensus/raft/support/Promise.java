@@ -34,6 +34,10 @@ public class Promise<V> extends CompletableFuture<V> {
         return exceptionally(e -> {if (e == TIMEOUT) action.timeout(); return null;} );
     }
 
+    public boolean finish() {
+        return complete(null);
+    }
+
     @Override
     public boolean complete(V result) {
         return super.complete(result) && cancelTimeout();

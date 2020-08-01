@@ -4,7 +4,9 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.atomic.LongAdder;
 
+import io.lubricant.consensus.raft.context.RaftContext;
 import io.lubricant.consensus.raft.support.EventLoopGroup.EventLoopExecutor;
+import io.lubricant.consensus.raft.support.anomaly.ExistedLoopException;
 
 /**
  * 事件循环
@@ -23,14 +25,58 @@ public class EventLoop implements Executor {
         this.executor = executor;
     }
 
-    public boolean inEventLoop() {
-        return Thread.currentThread() == executor;
-    }
-
-    protected Runnable next() throws InterruptedException {
+    Runnable next() throws InterruptedException {
         Runnable event = eventQueue.take();
         size.decrement();
         return event;
+    }
+
+    public ContextEventLoop bind(RaftContext context) {
+        return new ContextEventLoop(context);
+    }
+
+    /**
+     * 与特定上下文绑定的事件循环
+     * */
+    public class ContextEventLoop {
+
+        private final RaftContext context;
+
+        private ContextEventLoop(RaftContext context) {
+            this.context = context;
+        }
+
+        public void execute(Runnable event, boolean urgent) {
+            if (context.stillRunning()) {
+                EventLoop.this.execute(() -> { if (context.stillRunning()) event.run(); }, urgent);
+            }
+        }
+
+        public void execute(Runnable event) {
+            if (context.stillRunning()) {
+                EventLoop.this.execute(() -> { if (context.stillRunning()) event.run(); });
+            }
+        }
+
+        public void enforce(Runnable event) {
+            EventLoop.this.execute(event);
+        }
+
+        public boolean inEventLoop() {
+            return EventLoop.this.inEventLoop();
+        }
+
+        public boolean isAvailable() {
+            return EventLoop.this.isAvailable();
+        }
+
+        public boolean isRunning() {
+            return EventLoop.this.isRunning();
+        }
+
+        public boolean isBusy() {
+            return EventLoop.this.isBusy();
+        }
     }
 
     /**
@@ -50,7 +96,7 @@ public class EventLoop implements Executor {
                 size.increment();
             }
         } else {
-            throw new IllegalStateException("EventLoop is shutdown");
+            throw new ExistedLoopException();
         }
     }
 
@@ -64,9 +110,30 @@ public class EventLoop implements Executor {
     }
 
     /**
+     * 是否处于事件循环中
+     */
+    boolean inEventLoop() {
+        return Thread.currentThread() == executor;
+    }
+
+    /**
+     * 事件循环是否接受新作业
+     */
+    boolean isAvailable() {
+        return executor.isWorking && ! isBusy();
+    }
+
+    /**
+     * 事件循环是否正在处理作业
+     */
+    boolean isRunning() {
+        return executor.isRunning;
+    }
+
+    /**
      * 队列是否繁忙
      */
-    public boolean isBusy() {
+    boolean isBusy() {
         return QUEUE_LIMIT - size.longValue() < QUEUE_BUSY_HINT;
     }
 

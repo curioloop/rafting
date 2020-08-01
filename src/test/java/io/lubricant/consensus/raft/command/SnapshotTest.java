@@ -1,10 +1,10 @@
-package io.lubricant.consensus.raft.support;
+package io.lubricant.consensus.raft.command;
 
 import io.lubricant.consensus.raft.cluster.cmd.AppendCommand;
 import io.lubricant.consensus.raft.cluster.cmd.FileMachine;
-import io.lubricant.consensus.raft.command.MaintainAgreement;
-import io.lubricant.consensus.raft.command.RaftMachine;
 import io.lubricant.consensus.raft.command.storage.RocksSerializer;
+import io.lubricant.consensus.raft.support.PendingTask;
+import io.lubricant.consensus.raft.support.TimeLimited;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -42,7 +42,7 @@ public class SnapshotTest {
         machine.apply(3, new AppendCommand("3"));
     }
 
-    private PendingTask<SnapshotArchive.Snapshot> getTask( boolean success, long delay) throws Exception {
+    private PendingTask<SnapshotArchive.Snapshot> getTask(boolean success, long delay) throws Exception {
         return getTask(0, 1, success, delay);
     }
 

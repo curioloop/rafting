@@ -5,6 +5,7 @@ import io.lubricant.consensus.raft.context.RaftContext;
 import io.lubricant.consensus.raft.context.member.Leader;
 import io.lubricant.consensus.raft.support.Promise;
 import io.lubricant.consensus.raft.support.anomaly.BusyLoopException;
+import io.lubricant.consensus.raft.support.anomaly.ExistedLoopException;
 import io.lubricant.consensus.raft.support.anomaly.NotLeaderException;
 import io.lubricant.consensus.raft.support.anomaly.NotReadyException;
 
@@ -62,10 +63,11 @@ public class RaftStub implements AutoCloseable {
      */
     public <R> Promise<R> submit(Command<R> cmd) {
         Promise<R> promise = new Promise<>(context.envConfig().broadcastTimeout());
-        if (context.eventLoop().isBusy()) {
-            promise.completeExceptionally(new BusyLoopException());
-        } else {
+        if (context.eventLoop().isAvailable()) {
             context.eventLoop().execute(() -> process(cmd, promise, context));
+        } else  {
+            promise.completeExceptionally( context.eventLoop().isBusy() ?
+                    new BusyLoopException(): new ExistedLoopException());
         }
         return promise;
     }

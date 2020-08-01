@@ -3,9 +3,9 @@ package io.lubricant.consensus.raft.transport;
 import io.lubricant.consensus.raft.RaftResponse;
 import io.lubricant.consensus.raft.context.ContextManager;
 import io.lubricant.consensus.raft.context.RaftContext;
+import io.lubricant.consensus.raft.command.SnapshotArchive.Snapshot;
 import io.lubricant.consensus.raft.support.RaftConfig;
 import io.lubricant.consensus.raft.support.RaftThreadGroup;
-import io.lubricant.consensus.raft.support.SnapshotArchive.Snapshot;
 import io.lubricant.consensus.raft.transport.event.*;
 import io.lubricant.consensus.raft.transport.rpc.AsyncService;
 import io.netty.channel.nio.NioEventLoopGroup;
@@ -71,8 +71,8 @@ public class NettyCluster implements RaftCluster, EventBus.EventDispatcher {
                 logger.error("RaftContext({}) of Source({}) context not found", contextId, source);
                 return;
             }
-            if (context.eventLoop().isBusy()) {
-                logger.error("Source({}) context is busy", source);
+            if (! context.eventLoop().isAvailable()) {
+                logger.error("Source({}) context is unavailable", source);
                 return;
             }
 

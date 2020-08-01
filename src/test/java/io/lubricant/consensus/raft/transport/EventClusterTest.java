@@ -1,7 +1,7 @@
 package io.lubricant.consensus.raft.transport;
 
 import io.lubricant.consensus.raft.support.PendingTask;
-import io.lubricant.consensus.raft.support.SnapshotArchive.Snapshot;
+import io.lubricant.consensus.raft.command.SnapshotArchive.Snapshot;
 import io.lubricant.consensus.raft.transport.event.*;
 import io.netty.channel.Channel;
 import io.netty.channel.nio.NioEventLoopGroup;

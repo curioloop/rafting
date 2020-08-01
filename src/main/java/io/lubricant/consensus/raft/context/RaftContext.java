@@ -2,12 +2,15 @@ package io.lubricant.consensus.raft.context;
 
 import io.lubricant.consensus.raft.command.MaintainAgreement;
 import io.lubricant.consensus.raft.command.RaftStub.Command;
+import io.lubricant.consensus.raft.command.SnapshotArchive;
 import io.lubricant.consensus.raft.context.member.Follower;
 import io.lubricant.consensus.raft.context.member.Membership;
 import io.lubricant.consensus.raft.context.member.TimerTicket;
 import io.lubricant.consensus.raft.support.*;
+import io.lubricant.consensus.raft.support.EventLoop.ContextEventLoop;
 import io.lubricant.consensus.raft.support.StableLock.Persistence;
-import io.lubricant.consensus.raft.support.SnapshotArchive.Snapshot;
+import io.lubricant.consensus.raft.command.SnapshotArchive.Snapshot;
+import io.lubricant.consensus.raft.support.anomaly.ObsoleteContextException;
 import io.lubricant.consensus.raft.transport.RaftCluster;
 import io.lubricant.consensus.raft.transport.RaftCluster.ID;
 import io.lubricant.consensus.raft.transport.RaftCluster.SnapService;
@@ -41,13 +44,15 @@ public class RaftContext {
 
     private RaftCluster cluster; // 集群
     private RaftRoutine routine; // 例程
-    private EventLoop eventLoop; // 事件循环
+    private ContextEventLoop eventLoop; // 事件循环
 
     private Map<EntryKey, Promise> commandPromises = new ConcurrentHashMap<>();
 
     final AtomicReference<TimerTicket> ticketHolder = new AtomicReference<>(); // 保存最新的状态
     final AtomicReference<Membership> membershipFilter = new AtomicReference<>(); // 支持抢占切换
-    final AtomicInteger commitVersion = new AtomicInteger(); //
+
+    final AtomicInteger commitVersion = new AtomicInteger();
+    final LightweightMutex commandMutex = new LightweightMutex();
 
     final MaintainAgreement maintainAgreement;
     PendingTask<Void> snapshotInstallation;
@@ -81,7 +86,7 @@ public class RaftContext {
         maintainAgreement.minimalLogIndex(epoch.index());
     }
 
-    public Promise<Void> initialize(RaftCluster cluster, RaftRoutine routine, EventLoop eventLoop) {
+    public Promise<Void> initialize(RaftCluster cluster, RaftRoutine routine, ContextEventLoop eventLoop) {
         this.cluster = cluster;
         this.routine = routine;
         this.eventLoop = eventLoop;
@@ -98,7 +103,7 @@ public class RaftContext {
                     replicatedLog.flush(milestone.index(), milestone.term());
                 }
                 switchTo(Follower.class, restore.term, restore.ballot);
-                promise.complete(null);
+                promise.finish();
             } catch (Exception e) {
                 logger.error("RaftCtx({}) initialize failed", id);
                 promise.completeExceptionally(e);
@@ -113,9 +118,29 @@ public class RaftContext {
             stillRunning = false;
         } else return;
 
-        if (gracefully) {
-            // TODO
+        logger.info("RaftCtx({}) wait for replicated log convergence", id);
+        if (inEventLoop()) {
+            if (gracefully) quitEventLoop();
+        } else if (eventLoop().isRunning()) {
+            try {
+                Promise promise = new Promise();
+                eventLoop().enforce(() -> { if (gracefully) quitEventLoop(); promise.finish(); });
+                promise.get();
+            } catch (Exception e) {
+                logger.error("RaftCtx({}) wait for replicated log convergence error", id, e);
+            }
+        } else {
+            logger.error("RaftCtx({}) wait for replicated log convergence skip", id);
         }
+        logger.info("RaftCtx({}) wait for replicated log convergence done", id);
+
+        logger.info("RaftCtx({}) wait for state machine termination", id);
+        try {
+            if (gracefully) commandMutex.await();
+        } catch (InterruptedException e) {
+            logger.error("RaftCtx({}) wait for state machine termination interrupted", id);
+        }
+        logger.info("RaftCtx({}) wait for state machine termination done", id);
 
         try {
             stateMachine.close();
@@ -146,14 +171,14 @@ public class RaftContext {
     public int majority() { return cluster.size() / 2 + 1; }
 
     public boolean inEventLoop() { return eventLoop.inEventLoop(); }
+    public boolean stillRunning() { return stillRunning; }
 
     public RaftConfig envConfig() { return envConfig; }
     public RaftLog replicatedLog() { return replicatedLog; }
     public RaftMachine stateMachine() { return stateMachine; }
     public StableLock stableStorage() { return stableStorage; }
     public SnapshotArchive snapArchive() { return snapArchive; }
-    public EventLoop eventLoop() { return eventLoop; }
-
+    public ContextEventLoop eventLoop() { return eventLoop; }
 
     /**
      * 重置定时器
@@ -207,7 +232,7 @@ public class RaftContext {
             promise.whenTimeout(() -> commandPromises.remove(key));
             return true;
         } else {
-            promise.completeExceptionally(new IllegalStateException("stop"));
+            promise.completeExceptionally(new ObsoleteContextException());
             return false;
         }
     }
@@ -266,9 +291,20 @@ public class RaftContext {
                 logger.error("RaftCtx({}) join snapshot detected exception", id, e);
             }
             routine.accomplishInstallation(this);
-            logger.error("RaftCtx({}) join snapshot completely", id);
+            logger.warn("RaftCtx({}) join snapshot completely", id);
 
         }
         snapArchive.cleanPending();
+    }
+
+    /**
+     * 退出事件循环
+     * */
+    private void quitEventLoop() {
+        if (! inEventLoop()) {
+            throw new AssertionError("cleanup before exit should be performed in event loop");
+        }
+        joinSnapshot();
+        abortPromise();
     }
 }

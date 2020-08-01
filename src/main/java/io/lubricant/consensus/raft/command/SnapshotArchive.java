@@ -1,7 +1,8 @@
-package io.lubricant.consensus.raft.support;
+package io.lubricant.consensus.raft.command;
 
 import io.lubricant.consensus.raft.command.RaftLog.EntryKey;
 import io.lubricant.consensus.raft.command.RaftMachine.Checkpoint;
+import io.lubricant.consensus.raft.support.PendingTask;
 
 import java.io.IOException;
 import java.nio.file.*;

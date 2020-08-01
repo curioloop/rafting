@@ -1,7 +1,7 @@
 package io.lubricant.consensus.raft.transport;
 
 import io.lubricant.consensus.raft.support.PendingTask;
-import io.lubricant.consensus.raft.support.SnapshotArchive.Snapshot;
+import io.lubricant.consensus.raft.command.SnapshotArchive.Snapshot;
 import io.lubricant.consensus.raft.transport.event.NodeID;
 import io.lubricant.consensus.raft.transport.event.ShakeHandEvent;
 import io.lubricant.consensus.raft.transport.event.TransSnapEvent;

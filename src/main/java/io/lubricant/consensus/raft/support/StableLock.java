@@ -2,8 +2,8 @@ package io.lubricant.consensus.raft.support;
 
 import io.lubricant.consensus.raft.command.RaftLog.Entry;
 import io.lubricant.consensus.raft.command.RaftLog.EntryKey;
+import io.lubricant.consensus.raft.command.SnapshotArchive.Snapshot;
 import io.lubricant.consensus.raft.support.serial.Serialization;
-import io.lubricant.consensus.raft.support.SnapshotArchive.Snapshot;
 import io.lubricant.consensus.raft.transport.RaftCluster.ID;
 
 import java.io.*;

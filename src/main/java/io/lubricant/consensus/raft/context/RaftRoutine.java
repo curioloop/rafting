@@ -6,10 +6,12 @@ import io.lubricant.consensus.raft.command.RaftLog;
 import io.lubricant.consensus.raft.command.RaftLog.Entry;
 import io.lubricant.consensus.raft.command.RaftMachine;
 import io.lubricant.consensus.raft.command.RaftMachine.Checkpoint;
+import io.lubricant.consensus.raft.command.SnapshotArchive;
 import io.lubricant.consensus.raft.context.member.*;
 import io.lubricant.consensus.raft.support.*;
-import io.lubricant.consensus.raft.support.SnapshotArchive.PendingSnapshot;
-import io.lubricant.consensus.raft.support.SnapshotArchive.Snapshot;
+import io.lubricant.consensus.raft.command.SnapshotArchive.PendingSnapshot;
+import io.lubricant.consensus.raft.command.SnapshotArchive.Snapshot;
+import io.lubricant.consensus.raft.support.anomaly.RetryCommandException;
 import io.lubricant.consensus.raft.transport.RaftCluster.ID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,7 +32,9 @@ public class RaftRoutine implements AutoCloseable {
 
     private static final int MACHINE_IDLE = 0;
     private static final int MACHINE_HALT = -1;
-    private static final int RETRY_INTERVAL = 2000; // 提交失败后的重试间隔
+
+    private static final long SUCCESS = 0;
+    private static final long RETRY_INTERVAL = 2000; // 提交失败后的默认重试间隔
 
     private ScheduledExecutorService electionTimer; // 检查选举超时 (follower, candidate)
     private ScheduledExecutorService heartbeatKeeper; // 复制日志/发送心跳 (leader)
@@ -220,7 +224,7 @@ public class RaftRoutine implements AutoCloseable {
     public void commitState(RaftContext context, Function<Entry, Promise> promises, int maxRounds) {
         AtomicInteger version = context.commitVersion;
         int v = version.getAndUpdate(x -> (x == Integer.MAX_VALUE || x == MACHINE_HALT) ? x : x + 1);
-        if (v == 0) {
+        if (v == 0 && context.stillRunning) {
             commandExecutor.execute(() -> applyEntry(context, promises, maxRounds));
         } else if (v < 0) {
             throw new AssertionError("commitment is not allow during recovery from checkpoint");
@@ -228,33 +232,39 @@ public class RaftRoutine implements AutoCloseable {
     }
 
     private void applyEntry(RaftContext context, Function<Entry, Promise> promises, int maxRounds) {
+        LightweightMutex mutex = context.commandMutex;
         AtomicInteger version = context.commitVersion;
         int t = maxRounds - 1;
         int v = version.get();
-        while (v > 0) {
+        while (v > 0 && context.stillRunning) {
+
+            if (! mutex.tryLock()) return;
             // logger.debug("RaftCtx({}) commitment was triggered {} times recently", context.ctxID(), v);
-            if (applyCommand(context, promises, Math.max(1000, v))) {
-                if ((v = version.addAndGet(-v)) > 0) { // check whether to proceed to the next round
-                    if (--t < 0) { // yield the thread in fairness
-                        commandExecutor.execute(() -> applyEntry(context, promises, maxRounds));
-                        break;
-                    }
+            long result = applyCommand(context, promises, Math.max(1000, v));
+            if (! mutex.unlock() || ! context.stillRunning) return;
+
+            if (result != SUCCESS) { // something is wrong, retry latter
+                logger.warn("RaftCtx({}) commitment will retry again after {} ms", context.ctxID(), result);
+                TimeLimited.newTimer(result).schedule(() -> commandExecutor.execute(() -> applyEntry(context, promises, maxRounds)));
+                return;
+            }
+
+            if ((v = version.addAndGet(-v)) > 0) { // check whether to proceed to the next round
+                if (--t < 0) { // yield the thread in fairness
+                    commandExecutor.execute(() -> applyEntry(context, promises, maxRounds));
+                    return;
                 }
-            } else {
-                logger.warn("RaftCtx({}) commitment will retry again after {} ms", context.ctxID(), RETRY_INTERVAL);
-                TimeLimited.newTimer(RETRY_INTERVAL).schedule(() ->  // retry later
-                        commandExecutor.execute(() -> applyEntry(context, promises, maxRounds)));
             }
         }
     }
 
-    private boolean applyCommand(RaftContext context, Function<Entry, Promise> promises, int limit){
+    private long applyCommand(RaftContext context, Function<Entry, Promise> promises, int limit){
         try {
             RaftLog log = context.replicatedLog();
             RaftMachine machine = context.stateMachine();
             final long commitIndex = log.lastCommitted();
             long prevApplied = machine.lastApplied();
-            while (prevApplied < commitIndex && limit-- > 0) {
+            while (prevApplied < commitIndex && limit-- > 0 && context.stillRunning) {
                 long nextIndex = machine.lastApplied() + 1;
                 Entry entry = log.get(nextIndex);
                 if (entry == null) {
@@ -272,25 +282,28 @@ public class RaftRoutine implements AutoCloseable {
                 long lastApplied = machine.lastApplied();
                 if (lastApplied <= prevApplied) {
                     logger.error("RaftCtx({}) application stuck at {}", context.ctxID(), lastApplied);
-                    return false; // may be something wrong, retry latter
+                    return RETRY_INTERVAL; // may be something wrong, retry latter
                 }
                 prevApplied = lastApplied;
                 context.maintainAgreement.increaseCommand();
             }
+        } catch (RetryCommandException retry) {
+            logger.warn("RaftCtx({}) application retry after {} ms", context.ctxID(), retry.delayMills());
+            return retry.delayMills();
         } catch (Exception e) {
             logger.error("RaftCtx({}) apply command failed", context.ctxID(), e);
-            return false;
+            return RETRY_INTERVAL;
         } finally {
             maintainSnap(context);
         }
 
-        return true;
+        return SUCCESS;
     }
 
     private void maintainSnap(RaftContext context) {
         MaintainAgreement agreement = context.maintainAgreement;
         RaftMachine machine = context.stateMachine();
-        if (agreement.needMaintain(machine.lastApplied())) {
+        if (agreement.needMaintain(machine.lastApplied()) && context.stillRunning) {
             agreement.triggerMaintenance();
             logger.info("RaftCtx({}) maintain snap triggered", context.ctxID());
             try {
@@ -300,7 +313,7 @@ public class RaftRoutine implements AutoCloseable {
                     boolean updateLastInclude = false;
                     SnapshotArchive archive = context.snapArchive();
                     try {
-                        if (future != null) {
+                        if (future != null && context.stillRunning) {
                             RaftLog log = context.replicatedLog();
                             Checkpoint checkpoint = future.get();
                             if (checkpoint != null) {
@@ -346,7 +359,7 @@ public class RaftRoutine implements AutoCloseable {
      */
     public void compactLog(RaftContext context) {
         MaintainAgreement agreement = context.maintainAgreement;
-        if (agreement.needCompact()) {
+        if (agreement.needCompact() && context.stillRunning) {
             agreement.triggerCompaction();
             logger.info("RaftCtx({}) compact log triggered", context.ctxID());
             try {
@@ -474,7 +487,7 @@ public class RaftRoutine implements AutoCloseable {
             throw new AssertionError(String.format( "illegal snapshot (%d:%d) < (%d:%d)",
                     snapshot.lastIncludeIndex(), snapshot.lastIncludeTerm(), last.index(), last.term()));
         }
-
+        LightweightMutex mutex = context.commandMutex;
         AtomicInteger version = context.commitVersion;
         if (version.compareAndSet(MACHINE_IDLE, MACHINE_HALT)) {
             PendingTask<Void> pendingCheckpoint = new PendingTask<Void>(){
@@ -503,7 +516,10 @@ public class RaftRoutine implements AutoCloseable {
             };
             commandExecutor.execute(() -> {
                 if (version.get() == MACHINE_HALT) {
-                    pendingCheckpoint.perform();
+                    if (mutex.tryLock()) {
+                        pendingCheckpoint.perform();
+                        mutex.unlock();
+                    }
                     if (version.compareAndSet(MACHINE_HALT, MACHINE_IDLE)) {
                         return;
                     }
