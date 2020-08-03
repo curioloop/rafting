@@ -59,13 +59,15 @@ public class RaftContext {
 
     volatile boolean stillRunning = true;
 
-    public RaftContext(String id, StableLock lock, SnapshotArchive snap, RaftConfig config, RaftLog log, RaftMachine machine) throws Exception {
+    public RaftContext(String id, StableLock lock, SnapshotArchive snap, RaftConfig config, RaftCluster cluster, RaftRoutine routine, RaftLog log, RaftMachine machine) throws Exception {
         this.id = id;
         this.envConfig = config;
         this.replicatedLog = log;
         this.stateMachine = machine;
         this.stableStorage = lock;
         this.snapArchive = snap;
+        this.cluster = cluster;
+        this.routine = routine;
 
         Snapshot snapshot = snapArchive.lastSnapshot();
         long snapIndex = 0, snapTerm = 0;
@@ -86,11 +88,8 @@ public class RaftContext {
         maintainAgreement.minimalLogIndex(epoch.index());
     }
 
-    public Promise<Void> initialize(RaftCluster cluster, RaftRoutine routine, ContextEventLoop eventLoop) {
-        this.cluster = cluster;
-        this.routine = routine;
+    public Promise<Void> initialize(ContextEventLoop eventLoop) {
         this.eventLoop = eventLoop;
-
         Promise<Void> promise = new Promise<>();
         eventLoop.execute(() -> {
             try {
@@ -113,7 +112,7 @@ public class RaftContext {
         return promise;
     }
 
-    public synchronized void close(boolean gracefully) {
+    synchronized void close(boolean gracefully) {
         if (stillRunning) {
             stillRunning = false;
         } else return;

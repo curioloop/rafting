@@ -1,9 +1,12 @@
 package io.lubricant.consensus.raft.context;
 
 import io.lubricant.consensus.raft.command.*;
+import io.lubricant.consensus.raft.command.admin.AdminBootstrap;
+import io.lubricant.consensus.raft.command.admin.Administrator;
 import io.lubricant.consensus.raft.support.EventLoopGroup;
 import io.lubricant.consensus.raft.support.RaftConfig;
 import io.lubricant.consensus.raft.command.SnapshotArchive;
+import io.lubricant.consensus.raft.support.RaftException;
 import io.lubricant.consensus.raft.support.StableLock;
 import io.lubricant.consensus.raft.command.spi.MachineProvider;
 import io.lubricant.consensus.raft.command.spi.StateLoader;
@@ -21,10 +24,11 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * 上下文管理器
  */
-public class ContextManager implements AutoCloseable  {
+public class ContextManager {
 
     private final Logger logger = LoggerFactory.getLogger(ContextManager.class);
 
+    private AdminBootstrap adminBootstrap;
     private MachineProvider machineProvider;
     private StateLoader stateLoader;
     private EventLoopGroup eventLoops;
@@ -33,6 +37,7 @@ public class ContextManager implements AutoCloseable  {
     private RaftRoutine routine;
     private RaftCluster cluster;
 
+    private RaftContext adminContext;
     private Map<String, RaftContext> contextMap = new ConcurrentHashMap<>();
 
     public ContextManager(RaftConfig raftConfig) {
@@ -41,28 +46,21 @@ public class ContextManager implements AutoCloseable  {
         eventLoops = new EventLoopGroup(3, "ContextLoop");
     }
 
-    public void start(RaftCluster raftCluster, StateLoader stateLoader, MachineProvider machineProvider) {
+    public void start(RaftCluster raftCluster, StateLoader stateLoader, MachineProvider machineProvider) throws Exception {
         cluster = raftCluster;
         this.stateLoader = stateLoader;
         this.machineProvider = machineProvider;
+        this.adminBootstrap = new AdminBootstrap(config, this);
         eventLoops.start();
     }
 
-    /**
-     * 创建上下文
-     * @param contextId 上下文 ID
-     */
-    public synchronized RaftContext createContext(String contextId) throws Exception {
-        RaftContext context = contextMap.get(contextId);
-        if (context != null) {
-            return context;
-        }
-
+    private RaftContext buildContext(String contextId) {
         logger.info("Start creating RaftContext({})", contextId);
         RaftLog raftLog = null;
         RaftMachine raftMachine = null;
         StableLock lock = null;
         SnapshotArchive snap;
+        RaftContext context;
         try {
             if (!Files.exists(config.lockerPath())) {
                 Files.createDirectories(config.lockerPath());
@@ -72,10 +70,16 @@ public class ContextManager implements AutoCloseable  {
             }
             lock = new StableLock(config.lockerPath().resolve(contextId));
             snap = new SnapshotArchive(config.snapshotPath().resolve(contextId), 5);
-            raftLog = stateLoader.restore(contextId, true);
-            raftMachine = machineProvider.bootstrap(contextId, raftLog);
-            RaftContext raftContext = new RaftContext(contextId, lock, snap, config, raftLog, raftMachine);
-            raftContext.initialize(cluster, routine, eventLoops.next(raftContext)).get(); // block till initialization finished
+            if (Administrator.ID.equals(contextId)) {
+                raftLog = adminBootstrap.restore(contextId, true);
+                raftMachine = adminBootstrap.bootstrap(contextId, raftLog);
+            } else {
+                raftLog = stateLoader.restore(contextId, true);
+                raftMachine = machineProvider.bootstrap(contextId, raftLog);
+            }
+            RaftContext raftContext = new RaftContext(contextId, lock, snap, config, cluster, routine, raftLog, raftMachine);
+            raftMachine.initialize(raftContext);
+            raftContext.initialize(eventLoops.next(raftContext)).get(); // block till initialization finished
             context = raftContext;
         } catch (Exception ex) {
             if (raftMachine != null) {
@@ -95,19 +99,44 @@ public class ContextManager implements AutoCloseable  {
             }
 
             logger.info("Create RaftContext({}) failed", contextId);
-            throw ex;
+            throw new RaftException(String.format("RaftContext(%s) not created", contextId), ex);
         }
-
         logger.info("Create RaftContext({}) successfully", contextId);
-        contextMap.put(contextId, context);
         return context;
+    }
+
+    /**
+     * 创建上下文
+     * @param contextId 上下文 ID
+     */
+    public synchronized RaftContext createContext(String contextId) {
+        if (Administrator.ID.equals(contextId)) {
+            if (adminContext == null)
+                adminContext = buildContext(Administrator.ID);
+            return adminContext;
+        } else {
+            return contextMap.computeIfAbsent(contextId, this::buildContext);
+        }
+    }
+
+    /**
+     * 退出上下文
+     * @param contextId 上下文 ID
+     */
+    public synchronized boolean exitContext(String contextId) {
+        RaftContext context = contextMap.remove(contextId);
+        if (context == null) return false;
+        logger.info("Start exiting RaftContext({})", contextId);
+        context.close(true);
+        logger.info("Exit RaftContext({}) finished", contextId);
+        return true;
     }
 
     /**
      * 销毁上下文
      * @param contextId 上下文 ID
      */
-    public synchronized boolean destroyContext(String contextId) throws Exception {
+    public synchronized boolean destroyContext(String contextId) {
         RaftContext context = contextMap.remove(contextId);
         if (context == null) return false;
 
@@ -142,12 +171,17 @@ public class ContextManager implements AutoCloseable  {
      * @param contextId 上下文 ID
      */
     public RaftContext getContext(String contextId) throws Exception {
+        if (Administrator.ID.equals(contextId))
+            return adminContext;
         return contextMap.get(contextId);
     }
 
-    @Override
     public synchronized void close() throws Exception {
         eventLoops.shutdown(true);
+        if (adminContext != null) {
+            adminContext.close(true);
+        }
+        adminBootstrap.close();
         Iterator<Map.Entry<String, RaftContext>> contextIt = contextMap.entrySet().iterator();
         while (contextIt.hasNext()) {
             RaftContext context = contextIt.next().getValue();

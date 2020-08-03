@@ -45,8 +45,8 @@ public class EventLoopGroup {
             }
         }
 
-        public void shutdown(boolean blockade) {
-            if (blockade) {
+        public void shutdown(boolean stopOnly) {
+            if (stopOnly) {
                 isWorking = false;
                 logger.warn("EventLoop({}) stop accepting new events", getName());
                 return;
@@ -85,9 +85,9 @@ public class EventLoopGroup {
         }
     }
 
-    public synchronized void shutdown(boolean blockade) {
+    public synchronized void shutdown(boolean stopOnly) {
         for (EventLoopExecutor executor : executors) {
-            executor.shutdown(blockade);
+            executor.shutdown(stopOnly);
         }
     }
 }

@@ -1,6 +1,7 @@
 package io.lubricant.consensus.raft.command;
 
 import io.lubricant.consensus.raft.command.RaftLog.Entry;
+import io.lubricant.consensus.raft.context.RaftContext;
 
 import java.nio.file.Path;
 import java.util.concurrent.Future;
@@ -25,6 +26,11 @@ public interface RaftMachine extends AutoCloseable {
         public long lastIncludeIndex() { return index; }
         public void release() { }
     }
+
+    /***
+     * 可选初始化
+     */
+    default void initialize(RaftContext context) throws Exception {}
 
     /**
      * 最近一条已执行日志记录的索引

@@ -1,11 +1,13 @@
 package io.lubricant.consensus.raft.support.anomaly;
 
+import io.lubricant.consensus.raft.support.RaftException;
+
 import java.util.concurrent.TimeUnit;
 
 /**
  * 命令重试异常
  */
-public class RetryCommandException extends Exception {
+public class RetryCommandException extends RaftException {
 
     private final long delayMills;
 
@@ -18,11 +20,6 @@ public class RetryCommandException extends Exception {
 
     public long delayMills() {
         return delayMills;
-    }
-
-    @Override
-    public Throwable fillInStackTrace() {
-        return this;
     }
 
 }

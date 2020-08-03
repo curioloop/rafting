@@ -4,13 +4,12 @@ import io.lubricant.consensus.raft.RaftParticipant;
 import io.lubricant.consensus.raft.context.RaftContext;
 import io.lubricant.consensus.raft.context.member.Leader;
 import io.lubricant.consensus.raft.support.Promise;
-import io.lubricant.consensus.raft.support.anomaly.BusyLoopException;
-import io.lubricant.consensus.raft.support.anomaly.ExistedLoopException;
-import io.lubricant.consensus.raft.support.anomaly.NotLeaderException;
-import io.lubricant.consensus.raft.support.anomaly.NotReadyException;
+import io.lubricant.consensus.raft.support.RaftException;
+import io.lubricant.consensus.raft.support.anomaly.*;
 
 import java.io.Serializable;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.*;
 
 /**
@@ -30,10 +29,10 @@ public class RaftStub implements AutoCloseable {
     /**
      * 新建客户端
      * @param context 上下文
-     * @param parent 客户端池
+     * @param parent 客户端池（为 null 时忽略引用计数）
      */
     public RaftStub(RaftContext context, Map<String, RaftStub> parent) {
-        this.context = context;
+        this.context = Objects.requireNonNull(context);
         this.parent = parent;
     }
 
@@ -48,9 +47,11 @@ public class RaftStub implements AutoCloseable {
     public <R> R execute(Command<R> cmd, long timeout) throws ExecutionException, TimeoutException {
         try {
             return submit(cmd).get(timeout, TimeUnit.MILLISECONDS);
-        } catch (TimeoutException | ExecutionException e) {
+        } catch (TimeoutException | ExecutionException | RaftException e) {
             throw e;
         } catch (Exception e) {
+            if (e.getCause() instanceof RaftException)
+                throw (RaftException) e.getCause();
             throw new ExecutionException("fail to execute command " +
                     cmd.getClass().getSimpleName(), e);
         }
@@ -63,11 +64,11 @@ public class RaftStub implements AutoCloseable {
      */
     public <R> Promise<R> submit(Command<R> cmd) {
         Promise<R> promise = new Promise<>(context.envConfig().broadcastTimeout());
-        if (context.eventLoop().isAvailable()) {
+        if (context.stillRunning() && context.eventLoop().isAvailable()) {
             context.eventLoop().execute(() -> process(cmd, promise, context));
         } else  {
-            promise.completeExceptionally( context.eventLoop().isBusy() ?
-                    new BusyLoopException(): new ExistedLoopException());
+            promise.completeExceptionally( ! context.stillRunning() ? new ObsoleteContextException():
+                    context.eventLoop().isBusy() ? new BusyLoopException(): new ExistedLoopException());
         }
         return promise;
     }
@@ -90,6 +91,8 @@ public class RaftStub implements AutoCloseable {
     }
 
     public synchronized boolean refer() {
+        if (parent == null)
+            return true;
         if (refCount == 0)
             return false;
         refCount += 1;
@@ -98,6 +101,8 @@ public class RaftStub implements AutoCloseable {
 
     @Override
     public synchronized void close() throws Exception {
+        if (parent == null)
+            return;
         if (--refCount == 0)
             parent.remove(context.ctxID(), this);
     }

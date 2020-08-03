@@ -1,9 +1,10 @@
 package io.lubricant.consensus.raft.support;
 
+import io.lubricant.consensus.raft.support.anomaly.WaitTimeoutException;
+
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeoutException;
 
 /**
  * 异步回调通知（消除异步请求的线程阻塞）
@@ -19,7 +20,7 @@ public class Promise<V> extends CompletableFuture<V> {
         }
     }
 
-    private static final ExceptionWrapper TIMEOUT = new ExceptionWrapper(new TimeoutException());
+    private static final ExceptionWrapper TIMEOUT = new ExceptionWrapper(new WaitTimeoutException());
 
     private final ScheduledFuture timeout;
 

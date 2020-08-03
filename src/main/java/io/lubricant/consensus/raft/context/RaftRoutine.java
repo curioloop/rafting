@@ -268,7 +268,12 @@ public class RaftRoutine implements AutoCloseable {
                 long nextIndex = machine.lastApplied() + 1;
                 Entry entry = log.get(nextIndex);
                 if (entry == null) {
-                    throw new AssertionError("no vacancies allowed in log");
+                    Entry last = log.last();
+                    if (last == null) last = log.epoch();
+                    throw new AssertionError(String.format(
+                            "RaftCtx(%s): no vacancies allowed in log (epoch[%d:%d], last[%d:%d], applied[%d])",
+                            context.ctxID(), log.epoch().index(), log.epoch().term(),
+                            last.index(), last.term(), machine.lastApplied()));
                 }
                 Promise promise = promises.apply(entry);
                 try {
@@ -320,8 +325,8 @@ public class RaftRoutine implements AutoCloseable {
                                 Entry entry = log.get(checkpoint.lastIncludeIndex());
                                 if (entry == null) {
                                     Entry epoch = log.epoch();
-                                    throw new AssertionError(String.format("checkpoint index not found %d (%d) (%d-%d)",
-                                            checkpoint.lastIncludeIndex(), agreement.minimalLogIndex(), epoch.index(), epoch.term()));
+                                    throw new AssertionError(String.format("RaftCtx(%s): checkpoint index not found %d (%d) (%d-%d)",
+                                            context.ctxID(), checkpoint.lastIncludeIndex(), agreement.minimalLogIndex(), epoch.index(), epoch.term()));
                                 }
                                 if (updateLastInclude = archive.takeSnapshot(checkpoint, entry.term())) {
                                     agreement.snapshotIncludeEntry(entry.index(), entry.term());
@@ -369,8 +374,8 @@ public class RaftRoutine implements AutoCloseable {
                 if (entry != null) {
                     if (entry.term() != snap.term()) {
                         throw new AssertionError(String.format(
-                                "committed log entry (%d-%d) mismatch whit snapshot %d-%d",
-                                entry.index(), entry.term(), snap.index(), snap.term()));
+                                "RaftCtx(%s): committed log entry (%d-%d) mismatch whit snapshot %d-%d",
+                                context.ctxID(), entry.index(), entry.term(), snap.index(), snap.term()));
                     }
                     Future<Boolean> future = log.flush(entry.index(), entry.term());
                     logMaintainer.execute(() -> {
@@ -484,8 +489,8 @@ public class RaftRoutine implements AutoCloseable {
 
         if (snapshot.lastIncludeIndex() < last.index() ||
             snapshot.lastIncludeIndex() == last.index() && snapshot.lastIncludeTerm() < last.term()) {
-            throw new AssertionError(String.format( "illegal snapshot (%d:%d) < (%d:%d)",
-                    snapshot.lastIncludeIndex(), snapshot.lastIncludeTerm(), last.index(), last.term()));
+            throw new AssertionError(String.format( "RaftCtx(%s): illegal snapshot (%d:%d) < (%d:%d)",
+                    context.ctxID(), snapshot.lastIncludeIndex(), snapshot.lastIncludeTerm(), last.index(), last.term()));
         }
         LightweightMutex mutex = context.commandMutex;
         AtomicInteger version = context.commitVersion;
@@ -498,7 +503,7 @@ public class RaftRoutine implements AutoCloseable {
                         final long commitIndex = log.lastCommitted();
                         if (snapshot.lastIncludeIndex() <= commitIndex) {
                             throw new AssertionError(String.format(
-                                    "checkpoint index is included %d <= %d", snapshot.lastIncludeIndex(), commitIndex));
+                                    "RaftCtx(%s): checkpoint index is included %d <= %d", context.ctxID(), snapshot.lastIncludeIndex(), commitIndex));
                         }
                         logger.info("RaftCtx({}) try restoring snapshot({}:{})",
                                 context.ctxID(), snapshot.lastIncludeIndex(), snapshot.lastIncludeTerm());
@@ -524,7 +529,7 @@ public class RaftRoutine implements AutoCloseable {
                         return;
                     }
                 }
-                throw new AssertionError("illegal commit version " + version.get());
+                throw new AssertionError(String.format("RaftCtx(%s): illegal commit version %d", context.ctxID(), version.get()));
             });
             logger.info("RaftCtx({}) acquire exclusive commitment for snapshot({}:{}) successfully",
                     context.ctxID(), snapshot.lastIncludeIndex(), snapshot.lastIncludeTerm());

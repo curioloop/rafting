@@ -4,6 +4,7 @@ import io.lubricant.consensus.raft.RaftContainer;
 import io.lubricant.consensus.raft.cluster.cmd.AppendCommand;
 import io.lubricant.consensus.raft.cluster.cmd.FileBasedTestFactory;
 import io.lubricant.consensus.raft.command.RaftStub;
+import io.lubricant.consensus.raft.support.RaftException;
 import io.lubricant.consensus.raft.support.anomaly.NotLeaderException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,8 +23,17 @@ public class TestNode1 {
     public static void main(String[] args) throws Exception {
         RaftContainer container = new RaftContainer("raft1.xml");
         container.create(new FileBasedTestFactory());
-        container.createContext("root");
-        RaftStub root = container.getStub("root");
+        RaftStub root;
+        while (true) try {
+            root = container.getStub("root");
+            if (root != null) break;
+            container.openContext("root", true);
+            break;
+        } catch (RaftException e) {
+            logger.warn("create failed", e);
+            Thread.sleep(5000);
+        }
+        logger.info("create root context done");
         while (true) {
             try {
                 int rand = ThreadLocalRandom.current().nextInt(1000);

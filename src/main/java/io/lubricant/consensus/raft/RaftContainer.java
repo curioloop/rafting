@@ -1,6 +1,7 @@
 package io.lubricant.consensus.raft;
 
 import io.lubricant.consensus.raft.command.RaftStub;
+import io.lubricant.consensus.raft.command.admin.Administrator;
 import io.lubricant.consensus.raft.context.ContextManager;
 import io.lubricant.consensus.raft.context.RaftContext;
 import io.lubricant.consensus.raft.support.RaftConfig;
@@ -29,6 +30,7 @@ public class RaftContainer {
     private ContextManager manager;
     private RaftCluster cluster;
 
+    private Administrator admin;
     private Map<String, RaftStub> stubMap;
 
     public RaftContainer(String configPath) throws Exception {
@@ -45,6 +47,7 @@ public class RaftContainer {
             manager = factory.resumeContext(config);
             cluster = factory.joinCluster(config);
             factory.bootstrap(cluster, manager, loader, provider);
+            admin = (Administrator) manager.createContext(Administrator.ID).stateMachine();
             Runtime.getRuntime().addShutdownHook(new Thread(this::destroy, "RaftContainerHook"));
         } catch (Exception e) {
             logger.info("Create RaftContainer failed");
@@ -54,22 +57,42 @@ public class RaftContainer {
         logger.info("RaftContainer created successfully");
     }
 
-
-    public void createContext(String contextId) throws Exception {
+    /**
+     * 开启上下文
+     * @param contextId 上下文ID
+     * @param create 如果不存在则创建
+     */
+    public boolean openContext(String contextId, boolean create) throws Exception {
         if (!active) {
             throw new IllegalStateException("Container closed");
         }
-        manager.createContext(contextId);
+        if (!Administrator.ID.equals(contextId)) {
+            if (admin.get(contextId) != null) return true;
+            return admin.open(contextId, create) != null;
+        }
+        return false;
     }
 
-    public void destroyContext(String contextId) throws Exception {
+    /**
+     * 关闭上下文
+     * @param contextId 上下文ID
+     * @param destroy 关闭成功后销毁
+     */
+    public boolean closeContext(String contextId, boolean destroy) throws Exception {
         if (!active) {
             throw new IllegalStateException("Container closed");
         }
-        manager.destroyContext(contextId);
+        if (!Administrator.ID.equals(contextId)) {
+            if (admin.get(contextId) == null) return true;
+            return admin.close(contextId, destroy);
+        }
+        return false;
     }
 
     public RaftStub getStub(String contextId) throws Exception {
+        if (!active) {
+            throw new IllegalStateException("Container closed");
+        }
         RaftStub stub = stubMap.get(contextId);
         if (stub != null && stub.refer()) {
             return stub;
@@ -87,14 +110,12 @@ public class RaftContainer {
         return stub;
     }
 
-    public synchronized void destroy() {
-
-        if (!active) {
-            return;
-        }
+    synchronized void destroy() {
+        if (active) {
+            active = false;
+        } else return;
 
         logger.info("Start destroying RaftContainer");
-
         stubMap.clear();
 
         if (cluster != null) {
@@ -121,12 +142,12 @@ public class RaftContainer {
                 logger.error("Close loader failed", e);
             }
         }
+
+        admin = null;
         cluster = null;
         manager = null;
         provider = null;
         loader = null;
-        active = false;
-
         logger.info("RaftContainer is destroyed");
     }
 }
