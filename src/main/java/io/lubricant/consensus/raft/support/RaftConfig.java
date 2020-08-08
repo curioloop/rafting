@@ -31,14 +31,36 @@ public class RaftConfig {
     private final boolean preVote;
     private final int tick;
     private final double heartbeat, election, broadcast;
-    private final String logPath;
-    private final String statePath;
-    private final String lockerPath;
-    private final String snapshotPath;
+    private final String logPath, statePath, lockerPath, snapshotPath;
     private final int triggerInterval, maintainInterval, compactInterval, stateChangeThreshold, dirtyLogTolerance;
-    private final int availableCriticalPoint, recoveryCoolDown;
+    private final int availableCriticalPoint, recoveryCoolDownMills;
 
-    public RaftConfig(String configPath, boolean classpath) throws Exception {
+    public RaftConfig(URI localURI, List<URI> remoteURIs, boolean preVote,
+                      int tick, double heartbeat, double election, double broadcast,
+                      String logDir, String stateDir, String lockerDir, String snapshotDir,
+                      int triggerInterval, int maintainInterval, int compactInterval, int stateChangeThreshold, int dirtyLogTolerance,
+                      int availableCriticalPoint, int recoveryCoolDownMills) {
+        this.localURI = localURI;
+        this.remoteURIs = remoteURIs;
+        this.preVote = preVote;
+        this.tick = tick;
+        this.heartbeat = heartbeat;
+        this.election = election;
+        this.broadcast = broadcast;
+        this.triggerInterval = triggerInterval;
+        this.maintainInterval = maintainInterval;
+        this.compactInterval = compactInterval;
+        this.stateChangeThreshold = stateChangeThreshold;
+        this.dirtyLogTolerance = dirtyLogTolerance;
+        this.availableCriticalPoint = availableCriticalPoint;
+        this.recoveryCoolDownMills = recoveryCoolDownMills;
+        this.logPath = logDir + (logDir.endsWith(File.separator) ? "": File.separator);
+        this.statePath = stateDir + (stateDir.endsWith(File.separator) ? "": File.separator);
+        this.lockerPath = lockerDir + (lockerDir.endsWith(File.separator) ? "": File.separator);
+        this.snapshotPath = snapshotDir + (lockerDir.endsWith(File.separator) ? "": File.separator);
+    }
+
+    public static RaftConfig loadXmlConfig(String configPath, boolean classpath) throws Exception {
 
         URL resource = ! classpath ? Paths.get(configPath).toUri().toURL():
                 Thread.currentThread().getContextClassLoader().getResource(configPath);
@@ -112,6 +134,12 @@ public class RaftConfig {
                 throw new IllegalArgumentException("snapshot");
             }
 
+            int availCriticalPoint = ((Number)xPath.evaluate("metrics/avail-critical-point", config, XPathConstants.NUMBER)).intValue();
+            int recoveryCoolDown = ((Number)xPath.evaluate("metrics/recovery-cool-down", config, XPathConstants.NUMBER)).intValue();
+            if (availCriticalPoint < 0 || recoveryCoolDown < 0) {
+                throw new IllegalArgumentException("metrics");
+            }
+
             String logDir = (String) xPath.evaluate("storage/log", config, XPathConstants.STRING);
             String stateDir = (String) xPath.evaluate("storage/state", config, XPathConstants.STRING);
             String lockerDir = (String) xPath.evaluate("storage/locker", config, XPathConstants.STRING);
@@ -129,32 +157,14 @@ public class RaftConfig {
                 throw new IllegalArgumentException("storage/snapshot");
             }
 
-            this.localURI = URI.create(local);
-            this.remoteURIs = Collections.unmodifiableList(remote.stream().map(URI::create).collect(Collectors.toList()));
+            URI localURI = URI.create(local);
+            List<URI> remoteURIs = Collections.unmodifiableList(remote.stream().map(URI::create).collect(Collectors.toList()));
 
             if (! "raft".equals(localURI.getScheme())) {
                 throw new IllegalArgumentException("scheme");
             }
 
-            this.preVote = preVote;
-            this.tick = tick;
-            this.heartbeat = heartbeat;
-            this.election = election;
-            this.broadcast = broadcast;
-
-            this.triggerInterval = triggerInterval;
-            this.maintainInterval = maintainInterval;
-            this.compactInterval = compactInterval;
-            this.stateChangeThreshold = stateChangeThreshold;
-            this.dirtyLogTolerance = dirtyLogTolerance;
-
-            this.availableCriticalPoint = 1;
-            this.recoveryCoolDown = 100;
-
-            this.logPath = logDir + (logDir.endsWith(File.separator) ? "": File.separator);
-            this.statePath = stateDir + (stateDir.endsWith(File.separator) ? "": File.separator);
-            this.lockerPath = lockerDir + (lockerDir.endsWith(File.separator) ? "": File.separator);
-            this.snapshotPath = snapshotDir + (lockerDir.endsWith(File.separator) ? "": File.separator);
+            return new RaftConfig(localURI, remoteURIs, preVote, tick, heartbeat, election, broadcast, logDir, stateDir, lockerDir, snapshotDir, triggerInterval, maintainInterval, compactInterval, stateChangeThreshold, dirtyLogTolerance, availCriticalPoint, recoveryCoolDown);
         }
     }
 
@@ -211,7 +221,7 @@ public class RaftConfig {
         return availableCriticalPoint;
     }
 
-    public int recoveryCoolDown() {
-        return recoveryCoolDown;
+    public int recoveryCoolDownMills() {
+        return recoveryCoolDownMills;
     }
 }

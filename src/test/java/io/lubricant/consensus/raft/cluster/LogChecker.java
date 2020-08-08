@@ -10,8 +10,8 @@ public class LogChecker {
 
     public static void main(String[] args) throws Exception {
         RocksSerializer serializer = new RocksSerializer();
-        RocksStateLoader load1 = new RocksStateLoader(new RaftConfig("raft1.xml", true));
-        RocksStateLoader load2 = new RocksStateLoader(new RaftConfig("raft2.xml", true));
+        RocksStateLoader load1 = new RocksStateLoader(RaftConfig.loadXmlConfig("raft1.xml", true));
+        RocksStateLoader load2 = new RocksStateLoader(RaftConfig.loadXmlConfig("raft2.xml", true));
         RaftLog log1  = load1.restore("root", true);
         RaftLog log2  = load2.restore("root", true);
         System.out.println("epoch : " + log1.epoch().index() + " : " + log2.epoch().index());

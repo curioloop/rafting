@@ -149,10 +149,10 @@ public class NettyNode extends AsyncService {
                 throw new IllegalArgumentException("illegal argument size " + params.length);
             }
             long term = ((Number) params[0]).longValue();
-            ID candidateId = (ID) params[1];
+            ID leaderId = (ID) params[1];
             long lastIncludedIndex = ((Number) params[2]).longValue();
             long lastIncludedTerm = ((Number) params[3]).longValue();
-            return () ->  context.participant().installSnapshot(term, candidateId, lastIncludedIndex, lastIncludedTerm);
+            return () ->  context.participant().installSnapshot(term, leaderId, lastIncludedIndex, lastIncludedTerm);
         }
         throw new IllegalArgumentException("unknown context " + scope);
     }

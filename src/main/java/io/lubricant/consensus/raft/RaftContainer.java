@@ -33,8 +33,8 @@ public class RaftContainer {
     private Administrator admin;
     private Map<String, RaftStub> stubMap;
 
-    public RaftContainer(String configPath) throws Exception {
-        config = new RaftConfig(configPath, true);
+    public RaftContainer(RaftConfig config) {
+        this.config = config;
         stubMap = new ConcurrentHashMap<>();
     }
 

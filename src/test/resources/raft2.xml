@@ -19,6 +19,10 @@
         <state-change-threshold>1</state-change-threshold>
         <dirty-log-tolerance>1</dirty-log-tolerance>
     </snapshot>
+    <metrics>
+        <avail-critical-point>1</avail-critical-point>
+        <recovery-cool-down>100</recovery-cool-down>
+    </metrics>
     <storage>
         <log>/data0/raft2/log</log>
         <state>/data0/raft2/state</state>

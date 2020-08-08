@@ -4,6 +4,7 @@ import io.lubricant.consensus.raft.RaftContainer;
 import io.lubricant.consensus.raft.cluster.cmd.AppendCommand;
 import io.lubricant.consensus.raft.cluster.cmd.FileBasedTestFactory;
 import io.lubricant.consensus.raft.command.RaftStub;
+import io.lubricant.consensus.raft.support.RaftConfig;
 import io.lubricant.consensus.raft.support.RaftException;
 import io.lubricant.consensus.raft.support.anomaly.NotLeaderException;
 import org.slf4j.Logger;
@@ -21,7 +22,7 @@ public class TestNode3 {
     private static final Logger logger = LoggerFactory.getLogger(TestNode3.class);
 
     public static void main(String[] args) throws Exception {
-        RaftContainer container = new RaftContainer("raft3.xml");
+        RaftContainer container = new RaftContainer(RaftConfig.loadXmlConfig("raft3.xml", true));
         container.create(new FileBasedTestFactory());
         RaftStub root;
         while (true) try {

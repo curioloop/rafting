@@ -56,7 +56,7 @@ public class Leader extends RaftMember implements Leadership {
             for (State state : followerStatus.values()) {
                 if (state.isReady(
                         ctx.envConfig().availableCriticalPoint(),
-                        ctx.envConfig().recoveryCoolDown(), now) && ++ready > half)
+                        ctx.envConfig().recoveryCoolDownMills(), now) && ++ready > half)
                     return true;
             }
         }
