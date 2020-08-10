@@ -115,7 +115,7 @@ public class RaftRoutine implements AutoCloseable {
             ScheduledFuture<?> schedule;
             if (participant instanceof Leader) {
                 ticket = new TimerTicket(participant, Long.MAX_VALUE);
-                schedule = heartbeatKeeper.schedule(() -> keepAlive(context, ticket), exist == null ? 0: timeout, TimeUnit.MILLISECONDS);
+                schedule = heartbeatKeeper.schedule(() -> keepAlive(context, ticket), exist == null ? timeout / 2: timeout, TimeUnit.MILLISECONDS);
             } else {
                 ticket = new TimerTicket(participant, deadline);
                 schedule = electionTimer.schedule(() -> electionTimeout(context, ticket), deadline - now, TimeUnit.MILLISECONDS);
@@ -212,6 +212,12 @@ public class RaftRoutine implements AutoCloseable {
 
         if (! resetTimer(context, participant, false)) {
             throw new AssertionError("initial reset timer must complete successfully");
+        }
+
+        try {
+            context.stateMachine().roleChanged(context);
+        } catch (Exception e) {
+            logger.error("RaftCtx({}) on role change error", context.ctxID(), e);
         }
     }
 

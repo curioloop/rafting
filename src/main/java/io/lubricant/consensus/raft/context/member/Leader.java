@@ -25,6 +25,7 @@ public class Leader extends RaftMember implements Leadership {
     public Leader(RaftContext context, long term, ID candidate, Membership membership) {
         super(context, term, candidate, membership);
         ctx.abortPromise();
+        onTimeout();
     }
 
     private void prepareReplication() throws Exception {

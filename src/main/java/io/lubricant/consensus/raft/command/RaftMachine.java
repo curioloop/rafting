@@ -28,9 +28,14 @@ public interface RaftMachine extends AutoCloseable {
     }
 
     /***
-     * 可选初始化
+     * 初始化
      */
     default void initialize(RaftContext context) throws Exception {}
+
+    /***
+     * 角色变更
+     */
+    default void roleChanged(RaftContext context) throws Exception {}
 
     /**
      * 最近一条已执行日志记录的索引

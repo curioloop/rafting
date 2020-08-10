@@ -12,6 +12,7 @@ import io.lubricant.consensus.raft.command.admin.stm.*;
 import io.lubricant.consensus.raft.command.storage.RocksSerializer;
 import io.lubricant.consensus.raft.context.ContextManager;
 import io.lubricant.consensus.raft.context.RaftContext;
+import io.lubricant.consensus.raft.context.member.Leader;
 import io.lubricant.consensus.raft.support.Promise;
 import io.lubricant.consensus.raft.support.RaftException;
 import io.lubricant.consensus.raft.support.serial.CmdSerializer;
@@ -59,6 +60,19 @@ public class Administrator implements RaftMachine {
     @Override
     public void initialize(RaftContext context) throws Exception {
         stub = new RaftStub(context, null);
+    }
+
+    @Override
+    public void roleChanged(RaftContext context) {
+        if (context.participant() instanceof Leader) {
+            Leader leader = (Leader) context.participant();
+            context.eventLoop().execute(() -> {
+                if (leader == context.participant()) {
+                    logger.info("Admin is new leader({})", leader.membership().term());
+                    leader.acceptCommand(new Echo(), new Promise());
+                }
+            });
+        }
     }
 
     public RaftContext get(String contextId) throws Exception {
